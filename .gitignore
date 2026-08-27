@@ -1,0 +1,27 @@
+.env
+__pycache__/
+*.pyc
+.picks_history.json
+.adaptive_state.json
+.last_scan.json
+.missed_movers_history.json
+.sector_cache.json
+.regime_state.json
+.sector_state.json
+.user_preferences.json
+
+# Local config (contains SMTP sender_password)
+config.json
+config.json.bak
+
+# Runtime state / caches
+.alert_state.json
+.muted.json
+.skipped.json
+.fundamental_cache.json
+.user_ratings.json
+.user_ratings.json.*
+reports/
+
+# Local tool settings
+.claude/settings.local.json
