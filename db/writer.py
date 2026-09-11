@@ -88,11 +88,9 @@ def _record(evaluations, ticker_data, report_lists, sector_rotation,
             flags[(it.get("ticker"), side, it.get("rating"))] = (
                 bool(it.get("escalated")), it.get("prev_rung"))
 
-    trend = None
-    if isinstance(market_trends, dict):
-        trend = market_trends.get("trend") or market_trends.get("market_trend")
-    elif isinstance(market_trends, str):
-        trend = market_trends
+    # get_market_trend() returns one verdict per benchmark, e.g.
+    # {"SPY": "bullish", "QQQ": "bullish"}. Stored whole as JSONB.
+    trends = market_trends if isinstance(market_trends, dict) else {}
 
     with connect() as conn:
         cur = conn.cursor()
@@ -100,11 +98,12 @@ def _record(evaluations, ticker_data, report_lists, sector_rotation,
         # ---- scan_runs: the parent row everything else belongs to ----
         run_id = cur.execute(
             """INSERT INTO scan_runs (started_at, finished_at, tickers_scanned,
-                                      api_calls, market_trend, report_path)
+                                      api_calls, market_trends, report_path)
                VALUES (%s, %s, %s, %s, %s, %s)
                RETURNING id""",
             (started_at or observed_at, observed_at, len(ticker_data or {}),
-             api_calls, trend, str(report_path) if report_path else None),
+             api_calls, __import__("json").dumps(trends),
+             str(report_path) if report_path else None),
         ).fetchone()[0]
 
         # ---- tickers: a rating may name a symbol the DB hasn't seen ----

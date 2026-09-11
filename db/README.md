@@ -56,6 +56,29 @@ records itself.
 | `writer.py` | Called by `ratings_runner.run_report()`. Fail-soft. |
 | `q.py` | Query runner for exploration. Always rolls back. |
 
+## API
+
+Read-only HTTP layer over the same data, in `../api`:
+
+```
+uvicorn api.main:app --reload     # http://127.0.0.1:8000/docs
+```
+
+| Endpoint | Returns |
+|---|---|
+| `/stats` | Row counts and how many days of history exist |
+| `/runs` | Recent scan runs with duration and API cost |
+| `/alerts` | Latest-run alerts, filterable by direction, rung, grade, sector |
+| `/tickers/{symbol}` | Ladder, latest price, value grade, price history |
+| `/grades` | Grade distribution |
+| `/sectors` | Latest rotation with rank movement (`LAG()` window function) |
+| `/symbols` | Every rated symbol, for autocomplete |
+
+Read-only on purpose: the scanner owns writes, so the API cannot corrupt
+the history it exists to show. Uses a sync connection pool — psycopg's
+async mode cannot run on Windows' default ProactorEventLoop, and FastAPI
+runs `def` endpoints in a threadpool anyway.
+
 ## Schema
 
 Imported from JSON:
@@ -90,3 +113,4 @@ in a new file.
 | `004_current_system.sql` | Dropped the legacy picks modeling; added the tables the live scanner needs. |
 | `005_value_direction_terms.sql` | `bullish`/`bearish`, matching `scoring.py`. |
 | `006_link_runs.sql` | Foreign keys to `scan_runs` — the relation was implicit before. |
+| `007_market_trends_shape.sql` | `get_market_trend()` returns one verdict per benchmark, not a single value. |
