@@ -48,6 +48,16 @@ def open_pool() -> ConnectionPool:
             max_size=8,          # Neon's free tier is not generous; stay modest
             open=False,
             kwargs={"row_factory": dict_row},   # rows arrive as dicts, not tuples
+
+            # Neon scales to zero and drops idle connections, so a pooled
+            # connection can be dead by the time it is handed out --
+            # "SSL connection has been closed unexpectedly". check runs a
+            # cheap liveness ping first and silently replaces dead ones;
+            # max_idle retires them before Neon does.
+            check=ConnectionPool.check_connection,
+            max_idle=60.0,
+            max_lifetime=600.0,
+            reconnect_timeout=30.0,
         )
         _pool.open(wait=True, timeout=20)
     return _pool
