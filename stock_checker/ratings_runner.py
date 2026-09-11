@@ -6,7 +6,7 @@ and generates a report with value grades, sector rotation, and earnings data.
 
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .constants import (USER_RATINGS_FILE, REPORTS_DIR,
                         NEAR_PCT, NEAR_PCT_BY_RATING)
@@ -28,6 +28,12 @@ from .alert_state import (load_state, save_state, mark_escalations,
                           record, ALERT_STATE_FILE)
 
 import json
+
+try:
+    from db.writer import record_run
+except Exception:  # the Postgres layer is optional - report runs without it
+    def record_run(**_kwargs):
+        pass
 
 # 1-star rungs in APPROACHING are the noisiest bucket - the shallowest level
 # on every ticker, all at once. Set False to bring them back.
@@ -131,6 +137,7 @@ def run_report() -> tuple:
         print("  No ratings found. Run rate_stocks.py first.")
         return None, None
 
+    run_started_at = datetime.now(timezone.utc)
     config = load_config()
     reset_api_counter()
     reset_earnings_calendar_cache()
@@ -166,8 +173,8 @@ def run_report() -> tuple:
     print("  Fetching sector rotation...")
     spy_df = fetch_stock_data("SPY", period="6mo")
     sector_rotation = calculate_sector_rotation(spy_df)
-    sector_changes = check_sector_changes(sector_rotation,
-                                           spy_close=float(spy_df["Close"].iloc[-1]) if not spy_df.empty else 0)
+    spy_close = float(spy_df["Close"].iloc[-1]) if not spy_df.empty else 0
+    sector_changes = check_sector_changes(sector_rotation, spy_close=spy_close)
 
     # Market trends
     market_trends = get_market_trend(config)
@@ -181,6 +188,11 @@ def run_report() -> tuple:
     sell_alerts = []
     sell_near = []
 
+    # Every rung evaluated this run, before any report filtering. The
+    # report only shows the deepest/nearest unmuted rungs; the database
+    # keeps the full picture so history is complete.
+    all_evals = []
+
     for ticker, data in ratings.items():
         td = ticker_data.get(ticker, {})
         price = td.get("price")
@@ -193,6 +205,7 @@ def run_report() -> tuple:
         # Process buys
         for entry in data.get("buys", []):
             info = _classify_entry(price, entry, "buy")
+            all_evals.append((ticker, "buy", info, price))
             item = {
                 "ticker": ticker,
                 "price": price,
@@ -217,6 +230,7 @@ def run_report() -> tuple:
         # Process sells
         for entry in data.get("sells", []):
             info = _classify_entry(price, entry, "sell")
+            all_evals.append((ticker, "sell", info, price))
             item = {
                 "ticker": ticker,
                 "price": price,
@@ -245,10 +259,16 @@ def run_report() -> tuple:
     # the first ever run so the whole book does not light up at once.
     state = load_state()
     seed = not ALERT_STATE_FILE.exists()
+    # The near lists are tracked the same way - a name newly inside range, or
+    # inside range on a deeper rung than before, is the news there.
     mark_escalations(buy_alerts, state, "buy", seed)
     mark_escalations(sell_alerts, state, "sell", seed)
+    mark_escalations(buy_near, state, "buy_near", seed)
+    mark_escalations(sell_near, state, "sell_near", seed)
     record(buy_alerts, state, "buy")
     record(sell_alerts, state, "sell")
+    record(buy_near, state, "buy_near")
+    record(sell_near, state, "sell_near")
     save_state(state)
 
     # Sort both sections by rating first — a deep rung being approached is
@@ -278,6 +298,23 @@ def run_report() -> tuple:
 
     print(f"\n  Report saved: {path}")
     print(f"  API calls: {get_api_call_count()}")
+
+    # Persist the run. Additive and fail-soft: the JSON state files above
+    # are already written, and a database problem prints one line rather
+    # than breaking the report.
+    record_run(
+        evaluations=all_evals,
+        ticker_data=ticker_data,
+        report_lists={"buy": buy_alerts, "sell": sell_alerts,
+                      "buy_near": buy_near, "sell_near": sell_near},
+        sector_rotation=sector_rotation,
+        spy_close=spy_close,
+        market_trends=market_trends,
+        report_path=path,
+        started_at=run_started_at,
+        api_calls=get_api_call_count(),
+    )
+
     return path, text
 
 
@@ -346,11 +383,27 @@ def _fmt_item(item: dict, side: str) -> str:
     return f"   {ticker:7s}  ${price:<9.2f}  {status:30s}  {stars:{max(5, rungs)}s} ({rating}/{rungs}){tag_str}"
 
 
+def _escalated_only(items: list) -> list:
+    """Keep only the flagged lines - what is new or deeper since last report.
+
+    Everything else is the same news as yesterday, and at a few hundred lines a
+    run the unchanged names bury the ones that moved.
+    """
+    return [i for i in items if i.get("escalated")]
+
+
 def write_ratings_report(buy_alerts, buy_near,
                           sell_alerts, sell_near,
                           sector_rotation, sector_changes,
                           market_trends, market_context) -> tuple:
-    """Write the ratings-based report."""
+    """Write the ratings-based report - flagged lines only."""
+    totals = (len(buy_alerts), len(buy_near), len(sell_alerts), len(sell_near))
+    buy_total, buy_near_total, sell_total, sell_near_total = totals
+    buy_alerts = _escalated_only(buy_alerts)
+    buy_near = _escalated_only(buy_near)
+    sell_alerts = _escalated_only(sell_alerts)
+    sell_near = _escalated_only(sell_near)
+
     REPORTS_DIR.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
     report_path = REPORTS_DIR / f"ratings_{timestamp}.txt"
@@ -387,7 +440,7 @@ def write_ratings_report(buy_alerts, buy_near,
     rest_near = [i for i in buy_near if i["rating"] != 5]
 
     if watch_near:
-        L.append(f"  >>> WATCH CLOSING IN — {len(watch_near)} within "
+        L.append(f"  >>> WATCH CLOSING IN — {len(watch_near)} new within "
                  f"{NEAR_PCT_BY_RATING[5]:.1f}% of a 5-star price <<<")
         L.append("")
         for item in watch_near:
@@ -395,21 +448,27 @@ def write_ratings_report(buy_alerts, buy_near,
         L.append("")
 
     if buy_alerts:
-        L.append(f"  *** TRIGGERED — {len(buy_alerts)} at or below your buy price ***")
+        L.append(f"  *** TRIGGERED — {len(buy_alerts)} new of {buy_total} "
+                 f"at or below your buy price ***")
         L.append("")
         for item in buy_alerts:
             L.append(_fmt_item(item, "buy"))
         L.append("")
 
     if rest_near:
-        L.append(f"  APPROACHING — {len(rest_near)} within {NEAR_PCT:.0f}% of buy price")
+        L.append(f"  APPROACHING — {len(rest_near)} new of {buy_near_total} "
+                 f"within {NEAR_PCT:.0f}% of buy price")
         L.append("")
         for item in rest_near:
             L.append(_fmt_item(item, "buy"))
         L.append("")
 
     if not buy_alerts and not buy_near:
-        L.append("    Nothing near your buy targets.")
+        if buy_total or buy_near_total:
+            L.append(f"    Nothing new on the buy side — {buy_total} triggered and "
+                     f"{buy_near_total} approaching, all unchanged since last report.")
+        else:
+            L.append("    Nothing near your buy targets.")
         L.append("")
 
     # ==================== SELLS ====================
@@ -419,21 +478,27 @@ def write_ratings_report(buy_alerts, buy_near,
     L.append("")
 
     if sell_alerts:
-        L.append(f"  *** TRIGGERED — {len(sell_alerts)} at or above your sell price ***")
+        L.append(f"  *** TRIGGERED — {len(sell_alerts)} new of {sell_total} "
+                 f"at or above your sell price ***")
         L.append("")
         for item in sell_alerts:
             L.append(_fmt_item(item, "sell"))
         L.append("")
 
     if sell_near:
-        L.append(f"  APPROACHING — {len(sell_near)} within 5% of sell price")
+        L.append(f"  APPROACHING — {len(sell_near)} new of {sell_near_total} "
+                 f"within 5% of sell price")
         L.append("")
         for item in sell_near:
             L.append(_fmt_item(item, "sell"))
         L.append("")
 
     if not sell_alerts and not sell_near:
-        L.append("    Nothing near your sell targets.")
+        if sell_total or sell_near_total:
+            L.append(f"    Nothing new on the sell side — {sell_total} triggered and "
+                     f"{sell_near_total} approaching, all unchanged since last report.")
+        else:
+            L.append("    Nothing near your sell targets.")
         L.append("")
 
     # ==================== SECTOR ROTATION ====================
