@@ -99,6 +99,7 @@ Written per run, and previously not persisted at all:
 | `alert_events` | Every rung evaluated, with `pct_away` / `triggered` / `escalated`. |
 | `value_scores` | `score_value()` output — grade plus four sub-scores. |
 | `sector_snapshots` | Accumulates instead of overwriting `.sector_state.json`. |
+| `dark_pool_daily` | FINRA off-exchange short volume per symbol per day. Outlives the ~7-week `.finra_cache/`. |
 
 ## Migrations
 
@@ -114,3 +115,10 @@ in a new file.
 | `005_value_direction_terms.sql` | `bullish`/`bearish`, matching `scoring.py`. |
 | `006_link_runs.sql` | Foreign keys to `scan_runs` — the relation was implicit before. |
 | `007_market_trends_shape.sql` | `get_market_trend()` returns one verdict per benchmark, not a single value. |
+| `008_dark_pool_daily.sql` | FINRA dark pool history. `short_ratio` is a generated column. |
+
+## Queries
+
+`queries/dark_pool_score.sql` — the dark pool z-score as a window function
+(`ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING`). Matches `stock_checker/darkpool.py`
+to the hundredth; run it with `python db/q.py db/queries/dark_pool_score.sql`.

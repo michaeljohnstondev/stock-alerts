@@ -22,6 +22,7 @@ from .market import (
     get_market_context,
 )
 from .scoring import score_value
+from .darkpool import score_all as score_dark_pool
 from .report import write_sector_report
 from .mutes import load_mutes, is_muted
 from .alert_state import (load_state, save_state, mark_escalations,
@@ -30,9 +31,12 @@ from .alert_state import (load_state, save_state, mark_escalations,
 import json
 
 try:
-    from db.writer import record_run
+    from db.writer import record_run, record_dark_pool
 except Exception:  # the Postgres layer is optional - report runs without it
     def record_run(**_kwargs):
+        pass
+
+    def record_dark_pool(_history):
         pass
 
 # 1-star rungs in APPROACHING are the noisiest bucket - the shallowest level
@@ -169,6 +173,11 @@ def run_report() -> tuple:
 
     print(f"  All {len(rated_tickers)} tickers fetched. ({get_api_call_count()} API calls)")
 
+    # Dark pool score - FINRA's daily off-exchange file, a day behind
+    print("  Fetching dark pool data...")
+    dark_pool, dp_history = score_dark_pool(rated_tickers)
+    dp_as_of = max((d["as_of"] for d in dark_pool.values()), default=None)
+
     # Sector rotation
     print("  Fetching sector rotation...")
     spy_df = fetch_stock_data("SPY", period="6mo")
@@ -211,6 +220,7 @@ def run_report() -> tuple:
                 "price": price,
                 "earnings": earnings,
                 "value": value,
+                "dp": dark_pool.get(ticker),
                 # How many rungs this ticker has, so the report can say
                 # (2/4) on a four-rung ladder instead of always (2/3)
                 "rungs": len(data.get("buys", [])),
@@ -236,6 +246,7 @@ def run_report() -> tuple:
                 "price": price,
                 "earnings": earnings,
                 "value": value,
+                "dp": dark_pool.get(ticker),
                 "rungs": len(data.get("sells", [])),
                 "auto": data.get("sells_source") == "auto",
                 **info,
@@ -290,6 +301,7 @@ def run_report() -> tuple:
         sector_changes=sector_changes,
         market_trends=market_trends,
         market_context=market_context,
+        dp_as_of=dp_as_of,
     )
 
     # Also write sector report
@@ -314,6 +326,7 @@ def run_report() -> tuple:
         started_at=run_started_at,
         api_calls=get_api_call_count(),
     )
+    record_dark_pool(dp_history)
 
     return path, text
 
@@ -347,6 +360,13 @@ def _val_tag(value: dict) -> str:
     return " | ".join(parts)
 
 
+def _dp_tag(dp: dict | None) -> str:
+    """Dark pool score as a compact tag. 5 is normal, 10 hidden buying."""
+    if not dp:
+        return ""
+    return f"DP {dp['score']}"
+
+
 def _fmt_item(item: dict, side: str) -> str:
     """Format a single buy/sell item for the report."""
     ticker = item["ticker"]
@@ -374,6 +394,9 @@ def _fmt_item(item: dict, side: str) -> str:
     tags = []
     if earn:
         tags.append(earn)
+    dp = _dp_tag(item.get("dp"))
+    if dp:
+        tags.append(dp)
     if val:
         tags.append(val)
     tag_str = f"  [{' | '.join(tags)}]" if tags else ""
@@ -395,7 +418,8 @@ def _escalated_only(items: list) -> list:
 def write_ratings_report(buy_alerts, buy_near,
                           sell_alerts, sell_near,
                           sector_rotation, sector_changes,
-                          market_trends, market_context) -> tuple:
+                          market_trends, market_context,
+                          dp_as_of=None) -> tuple:
     """Write the ratings-based report - flagged lines only."""
     totals = (len(buy_alerts), len(buy_near), len(sell_alerts), len(sell_near))
     buy_total, buy_near_total, sell_total, sell_near_total = totals
@@ -426,6 +450,10 @@ def write_ratings_report(buy_alerts, buy_near,
             pct = info.get("pct_above_200", 0)
             ctx_parts.append(f"{info['label']} = {trend} ({pct:+.1f}%)")
         L.append(f"    Context:  {', '.join(ctx_parts)}")
+    if dp_as_of:
+        # FINRA posts each file in the evening, so this trails by a day
+        L.append(f"    Dark pool: FINRA off-exchange as of {dp_as_of.strftime('%a %b %d')}"
+                 f"  (DP 5 = normal, 10 = hidden buying, 1 = hidden selling)")
     L.append("")
 
     # ==================== BUYS ====================

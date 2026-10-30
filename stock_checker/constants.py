@@ -15,6 +15,7 @@ PLAY_TRACKER_FILE = ROOT_DIR / ".play_tracker.json"
 MISSED_MOVERS_FILE = ROOT_DIR / ".missed_movers_history.json"
 USER_RATINGS_FILE = ROOT_DIR / ".user_ratings.json"
 SKIPPED_FILE = ROOT_DIR / ".skipped.json"  # tickers snoozed until a date
+FINRA_CACHE_DIR = ROOT_DIR / ".finra_cache"  # daily off-exchange short volume files
 SKIP_DAYS_DEFAULT = 14  # let a big move settle before looking again
 
 # How close a rung must be to show in APPROACHING, as a percentage.
