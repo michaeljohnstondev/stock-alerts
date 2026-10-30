@@ -202,7 +202,7 @@ def compare() -> None:
             except Exception:
                 pass
 
-    days = max((len(b) for b in bars.values()), default=0)
+    days = max((len(b) for b, _ in bars.values()), default=0)
     def tally(table, key, outcome):
         c = table.setdefault(key, {})
         c[outcome] = c.get(outcome, 0) + 1
