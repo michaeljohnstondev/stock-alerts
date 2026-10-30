@@ -20,6 +20,7 @@ config.json.bak
 .skipped.json
 .fundamental_cache.json
 .finra_cache/
+.shadow_ladders.json
 .user_ratings.json
 .user_ratings.json.*
 reports/
