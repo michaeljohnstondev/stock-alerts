@@ -33,12 +33,16 @@ def mark_escalations(alerts: list, state: dict, side: str, seed: bool) -> list:
     """Tag alerts that are new or deeper than last time.
 
     On the very first run there is no history, so nothing is marked - otherwise
-    every line would carry the flag and it would mean nothing.
+    every line would carry the flag and it would mean nothing. A side that has
+    no history of its own seeds the same way, so adding one later does not light
+    up the whole book once.
     """
-    prev = state.get(side, {})
+    prev = state.get(side)
+    first = seed or prev is None
+    prev = prev or {}
     for a in alerts:
         was = prev.get(a["ticker"])
-        a["escalated"] = (not seed) and (was is None or a["rating"] > was)
+        a["escalated"] = (not first) and (was is None or a["rating"] > was)
         a["prev_rung"] = was
     return alerts
 
