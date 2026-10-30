@@ -26,6 +26,22 @@ came first, so the tie goes against the level.
 
 Rungs already at or above price when the race starts are left out: they
 were through before the test began and cannot be scored on it.
+
+Not every rung is a horizontal line. Each one is typed by the structure
+under it:
+
+    horizontal  shelves, pivot lows, unfilled gaps - a fixed price
+    ma          a rising moving average, projected forward - a sloped line
+    mixed       both at the same price (confluence)
+    unmatched   live rungs only - no structure the scanner can find today
+                sits under it, so it is your own read (trendlines included)
+
+A projected MA rung is stored as a single future value of a moving line,
+so a fixed-price test grades it on the wrong number most days. Fresh MA
+and mixed rungs are scored twice: frozen at the stored price (what an
+alert does today) and following the real MA day by day (what the line
+does). If the second holds clearly better, rungs that track their MA are
+worth building.
 """
 
 import json
@@ -38,6 +54,34 @@ from stock_checker.data import fetch_stock_data
 from fill_levels import ladder_for, _atr_pct, MIN_STEP_FLOOR, MIN_STEP_CAP
 
 SHADOW_FILE = ROOT_DIR / ".shadow_ladders.json"
+
+
+# Same four lines suggest_levels.project_mas projects from
+MA_SPECS = {
+    "50 SMA": lambda c: c.rolling(50).mean(),
+    "200 SMA": lambda c: c.rolling(200).mean(),
+    "50 EMA": lambda c: c.ewm(span=50, adjust=False).mean(),
+    "200 EMA": lambda c: c.ewm(span=200, adjust=False).mean(),
+}
+
+
+def _zone_type(zone: dict) -> tuple:
+    """(type, ma_name) for a suggest_levels zone."""
+    kinds = {m["kind"] for m in zone["members"]}
+    ma = next((m["note"].split(" in ")[0] for m in zone["members"]
+               if m["kind"] == "ma"), None)
+    if kinds == {"ma"}:
+        return "ma", ma
+    return ("mixed" if "ma" in kinds else "horizontal"), ma
+
+
+def _label_live(price: float, zones: list, step: float) -> str:
+    """Type a live rung by the nearest structure within half a step."""
+    near = [z for z in zones if abs(z["level"] - price) / price <= step / 2]
+    if not near:
+        return "unmatched"
+    z = min(near, key=lambda z: abs(z["level"] - price))
+    return _zone_type(z)[0]
 
 
 def _step(ticker: str) -> float:
@@ -65,12 +109,18 @@ def generate() -> None:
                 r = fut.result()
                 if r.get("error"):
                     raise ValueError(r["error"])
+                step = _step(t)
+                fresh = []
+                for b, z in zip(r["buys"], r["zones"]):
+                    kind, ma = _zone_type(z)
+                    fresh.append({**b, "type": kind, "ma": ma})
                 out[t] = {
                     "start_price": round(r["cur"], 2),
-                    "step": round(_step(t), 4),
-                    "fresh": r["buys"],
+                    "step": round(step, 4),
+                    "fresh": fresh,
                     # frozen copy of the live ladder at the same moment
-                    "live": live[t].get("buys", []),
+                    "live": [{**b, "type": _label_live(b["price"], r["all_zones"], step)}
+                             for b in live[t].get("buys", [])],
                     "live_source": live[t].get("source") or "hand",
                     "live_updated": live[t].get("updated"),
                 }
@@ -99,20 +149,24 @@ def generate() -> None:
           f" - the other {total - same} are where the sets actually differ.")
 
 
-def score_rung(level: float, step: float, bars) -> tuple:
-    """Return (outcome, days_to_resolve) for one buy rung over daily bars."""
+def score_rung(level, step: float, bars) -> tuple:
+    """Return (outcome, days_to_resolve) for one buy rung over daily bars.
+
+    level is a price, or a list of one price per bar for a rung that moves.
+    """
     touched_at = None
     for i, (low, high) in enumerate(bars):
+        lvl = level[i] if isinstance(level, list) else level
         if touched_at is None:
-            if low > level:
+            if low > lvl:
                 continue
             touched_at = i
             # the touch day itself can already have broken through
-            if low <= level * (1 - step):
+            if low <= lvl * (1 - step):
                 return "broke", 0
             continue
-        broke = low <= level * (1 - step)
-        held = high >= level * (1 + step)
+        broke = low <= lvl * (1 - step)
+        held = high >= lvl * (1 + step)
         if broke:  # ties go against the level
             return "broke", i - touched_at
         if held:
@@ -130,9 +184,14 @@ def compare() -> None:
     print(f"  Scoring {len(tickers)} tickers since {start}...")
 
     def bars_for(t):
-        df = fetch_stock_data(t, period="1y")
-        df = df[[d.date() > start for d in df.index]]
-        return list(zip(df["Low"], df["High"]))
+        # 3y so the 200-day lines are computed on the same history as when
+        # the rungs were generated
+        df = fetch_stock_data(t, period="3y")
+        after = [d.date() > start for d in df.index]
+        lines = {name: [float(v) for v in f(df["Close"])[after]]
+                 for name, f in MA_SPECS.items()}
+        df = df[after]
+        return list(zip(df["Low"], df["High"])), lines
 
     bars = {}
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -144,23 +203,32 @@ def compare() -> None:
                 pass
 
     days = max((len(b) for b in bars.values()), default=0)
+    def tally(table, key, outcome):
+        c = table.setdefault(key, {})
+        c[outcome] = c.get(outcome, 0) + 1
+
     # results[set][rung] -> Counter of outcomes
     results = {"live": {}, "fresh": {}}
-    by_source = {}
+    by_source, by_type = {}, {}
     for t, d in tickers.items():
-        b = bars.get(t)
-        if b is None:
+        got = bars.get(t)
+        if got is None:
             continue  # price fetch failed - leave the ticker out entirely
+        b, lines = got
         for which in ("live", "fresh"):
             for rung in d[which]:
                 if rung["price"] >= d["start_price"]:
                     continue  # already through when the race began
                 outcome, _ = score_rung(rung["price"], d["step"], b)
-                bucket = results[which].setdefault(rung["rating"], {})
-                bucket[outcome] = bucket.get(outcome, 0) + 1
+                tally(results[which], rung["rating"], outcome)
+                tally(by_type, f"{which} {rung['type']}", outcome)
                 if which == "live":
-                    src = by_source.setdefault(d["live_source"], {})
-                    src[outcome] = src.get(outcome, 0) + 1
+                    tally(by_source, d["live_source"], outcome)
+                elif rung["type"] in ("ma", "mixed") and rung.get("ma") in lines:
+                    # Mixed rungs are scored along their MA too: a horizontal
+                    # level and a rising line meet once, then part ways.
+                    moving, _ = score_rung(lines[rung["ma"]], d["step"], b)
+                    tally(by_type, f"fresh {rung['type']}, follows", moving)
 
     def row(label, c):
         n = sum(c.values())
@@ -189,6 +257,15 @@ def compare() -> None:
     for r in sorted(set(results["live"]) | set(results["fresh"])):
         for which in ("live", "fresh"):
             print(row(f"{which} rung {r}", results[which].get(r, {})))
+
+    print("\n  BY LEVEL TYPE  (ma = frozen price, 'follows' = scored on the real line)\n")
+    print(head)
+    for which in ("live", "fresh"):
+        for kind in ("horizontal", "ma", "ma, follows", "mixed", "mixed, follows",
+                     "unmatched"):
+            key = f"{which} {kind}"
+            if key in by_type:
+                print(row(key, by_type[key]))
 
     print("\n  LIVE SET BY WHO MADE IT\n")
     print(head)
