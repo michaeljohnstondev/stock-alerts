@@ -100,15 +100,19 @@ def ladder_for(ticker: str) -> dict:
     if len(picked) < 2:
         return {"ticker": ticker, "error": "too few levels"}
 
-    buys, seen = [], set()
+    buys, seen, used = [], set(), []
     for i, z in enumerate(picked, start=1):
         price = _nice(z["level"], cur)
         if price in seen or price <= 0:
             continue
         seen.add(price)
         buys.append({"price": price, "rating": len(buys) + 1})
+        used.append(z)
+    # zones: the zone behind each buy, index for index. all_zones: every
+    # candidate, so a caller can ask what structure sits under any price.
     return {"ticker": ticker, "cur": cur, "step": step, "buys": buys,
-            "kinds": [sorted(z["kinds"]) for z in picked]}
+            "kinds": [sorted(z["kinds"]) for z in picked],
+            "zones": used, "all_zones": zones}
 
 
 def main():
