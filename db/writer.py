@@ -203,3 +203,43 @@ def _record(evaluations, ticker_data, report_lists, sector_rotation,
 
     print(f"  [db] run {run_id}: {len(prices)} prices, {len(rows)} alert rows, "
           f"{len(vrows)} value scores, {len(srows)} sectors")
+
+
+def record_dark_pool(history: dict) -> None:
+    """Append FINRA days the table doesn't have yet. Never raises.
+
+    history: {ticker: [(date, short, total), ...]} from darkpool.load_history.
+    Each run sees ~7 weeks of days; only ones newer than what is stored get
+    sent, so a normal run writes one day, not thirty. Latest is per symbol,
+    so a ticker added to the ratings later still gets its back history.
+    """
+    if not _enabled() or not history:
+        return
+    try:
+        with connect() as conn:
+            cur = conn.cursor()
+            latest = dict(cur.execute(
+                """SELECT symbol, MAX(trade_date) FROM dark_pool_daily
+                   GROUP BY symbol""").fetchall())
+            rows = [(sym, d, short, total)
+                    for sym, days in history.items()
+                    for d, short, total in days
+                    if sym not in latest or d > latest[sym]]
+            if not rows:
+                return
+            cur.executemany(
+                "INSERT INTO tickers (symbol) VALUES (%s) ON CONFLICT DO NOTHING",
+                [(s,) for s in sorted({r[0] for r in rows})],
+            )
+            cur.executemany(
+                """INSERT INTO dark_pool_daily (symbol, trade_date,
+                                                short_volume, total_volume)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (symbol, trade_date) DO NOTHING""",
+                rows,
+            )
+            conn.commit()
+        print(f"  [db] dark pool: {len(rows)} rows "
+              f"({len({r[1] for r in rows})} trading days)")
+    except Exception as exc:
+        print(f"  [db] dark pool not recorded: {type(exc).__name__}: {exc}")

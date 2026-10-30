@@ -19,6 +19,7 @@ config.json.bak
 .muted.json
 .skipped.json
 .fundamental_cache.json
+.finra_cache/
 .user_ratings.json
 .user_ratings.json.*
 reports/
