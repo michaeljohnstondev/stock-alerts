@@ -2,13 +2,15 @@
 
     python snooze.py groups                    # every sector/industry on your list
     python snooze.py groups build              # ...filtered by name
-    python snooze.py industry "Residential Construction" 30
-    python snooze.py sector "Real Estate" 30
-    python snooze.py list                      # what is snoozed, until when
-    python snooze.py remove "Residential Construction"
+    python snooze.py industry "Aerospace & Defense" 30 --why "war ended, expect pullback"
+    python snooze.py sector "Real Estate" 30 --why "..."
+    python snooze.py list                      # what is snoozed, until when, why
+    python snooze.py history                   # every past snooze and its reason
+    python snooze.py remove "Aerospace & Defense"
 
-Days default to 30. Snoozes expire on their own. Names are matched without
-regard to case; use `groups` to find the exact one.
+--why is required: a snooze with no reason is impossible to review later.
+Days default to 30. Snoozes expire on their own and move to the history.
+Names are matched without regard to case; use `groups` to find the exact one.
 """
 
 import json
@@ -18,7 +20,8 @@ from collections import Counter
 from stock_checker.constants import USER_RATINGS_FILE
 from stock_checker.data import get_ticker_info
 from stock_checker.group_snooze import (LEVELS, SNOOZE_DAYS_DEFAULT,
-                                        load_snoozes, snooze, unsnooze)
+                                        expired_history, load_snoozes,
+                                        snooze, unsnooze)
 
 
 def _groups() -> dict:
@@ -50,7 +53,7 @@ def cmd_groups(filt: str = ""):
     print()
 
 
-def cmd_snooze(level: str, name: str, days: int):
+def cmd_snooze(level: str, name: str, days: int, reason: str):
     out, members = _groups()
     match = next((n for n in out[level] if n.lower() == name.lower()), None)
     if not match:
@@ -61,7 +64,7 @@ def cmd_snooze(level: str, name: str, days: int):
         else:
             print("  See every name with: python snooze.py groups")
         return
-    entry = snooze(level, match, days)
+    entry = snooze(level, match, days, reason)
     print(f"  Snoozed {level} '{match}' until {entry['until']} - "
           f"{len(members[match])} stocks hidden from buys: "
           f"{', '.join(sorted(members[match]))}")
@@ -74,7 +77,18 @@ def cmd_list():
         return
     for lvl in LEVELS:
         for name, v in sorted(snoozes[lvl].items()):
-            print(f"  {lvl:<9} {name:<40} until {v['until']}  (since {v['since']})")
+            print(f"  {lvl:<9} {name:<32} until {v['until']}  (since {v['since']})")
+            print(f"            why: {v.get('reason') or '-'}")
+
+
+def cmd_history():
+    past = expired_history()
+    if not past:
+        print("  No past snoozes.")
+        return
+    for e in sorted(past, key=lambda e: e["since"]):
+        print(f"  {e['since']} -> {e['ended']:<24} {e['level']:<9} {e['name']}")
+        print(f"            why: {e.get('reason') or '-'}")
 
 
 def main():
@@ -85,15 +99,25 @@ def main():
         cmd_groups(" ".join(args[1:]))
     elif args[0] == "list":
         cmd_list()
+    elif args[0] == "history":
+        cmd_history()
     elif args[0] == "remove" and len(args) > 1:
         name = " ".join(args[1:])
         print(f"  Removed '{name}'." if unsnooze(name) else f"  '{name}' was not snoozed.")
     elif args[0] in LEVELS and len(args) > 1:
         rest = args[1:]
+        reason = ""
+        if "--why" in rest:
+            i = rest.index("--why")
+            reason = " ".join(rest[i + 1:]).strip()
+            rest = rest[:i]
+        if not reason:
+            print('  Add a reason: --why "..." - e.g. --why "ran to all-time highs"')
+            return
         days = SNOOZE_DAYS_DEFAULT
-        if rest[-1].isdigit():
+        if rest and rest[-1].isdigit():
             days = int(rest.pop())
-        cmd_snooze(args[0], " ".join(rest), days)
+        cmd_snooze(args[0], " ".join(rest), days, reason)
     else:
         print(__doc__)
 
