@@ -51,13 +51,13 @@ FUND_COLS = [
 
 
 def main() -> None:
-    ratings = load(".user_ratings.json") or {}
-    funds = load(".fundamental_cache.json") or {}
-    sectors = load(".sector_cache.json") or {}
-    alerts = load(".alert_state.json") or {}
-    sector_st = load(".sector_state.json") or {}
-    skipped = load(".skipped.json") or {}
-    muted = load(".muted.json") or {}
+    ratings = load("state/user_ratings.json") or {}
+    funds = load("cache/fundamental_cache.json") or {}
+    sectors = load("cache/sector_cache.json") or {}
+    alerts = load("state/alert_state.json") or {}
+    sector_st = load("state/sector_state.json") or {}
+    skipped = load("state/skipped.json") or {}
+    muted = load("state/muted.json") or {}
 
     # ---- tickers: the union of every symbol mentioned anywhere ----
     symbols = set()

@@ -1,30 +1,22 @@
 .env
 __pycache__/
 *.pyc
-.picks_history.json
-.adaptive_state.json
-.last_scan.json
-.missed_movers_history.json
-.sector_cache.json
-.regime_state.json
-.sector_state.json
-.user_preferences.json
 
 # Local config (contains SMTP sender_password)
 config.json
 config.json.bak
 
-# Runtime state / caches
-.alert_state.json
-.muted.json
-.skipped.json
-.fundamental_cache.json
-.finra_cache/
-.shadow_ladders.json
-.snoozed_groups.json
-.user_ratings.json
-.user_ratings.json.*
+# Runtime files - see README "Where things live"
+state/
+cache/
+backups/
 reports/
+
+# Pre-reorg locations: runtime files lived as dotfiles in the root.
+# Kept ignored in case an old copy of a script recreates one.
+.*.json
+.*.json.*
+.finra_cache/
 
 # Local tool settings
 .claude/settings.local.json

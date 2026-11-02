@@ -2,20 +2,28 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
+# Where runtime files live. state/ is yours and cannot be rebuilt - ratings,
+# alert history, mutes, snoozes. cache/ is fetched data that can be thrown
+# away and refetched. Both are gitignored.
+STATE_DIR = ROOT_DIR / "state"
+CACHE_DIR = ROOT_DIR / "cache"
+STATE_DIR.mkdir(exist_ok=True)
+CACHE_DIR.mkdir(exist_ok=True)
+
 REPORTS_DIR = ROOT_DIR / "reports"
-STATE_FILE = ROOT_DIR / ".regime_state.json"
-SECTOR_STATE_FILE = ROOT_DIR / ".sector_state.json"
-PICKS_HISTORY_FILE = ROOT_DIR / ".picks_history.json"
-LAST_SCAN_FILE = ROOT_DIR / ".last_scan.json"
-ADAPTIVE_STATE_FILE = ROOT_DIR / ".adaptive_state.json"
-USER_PREFS_FILE = ROOT_DIR / ".user_preferences.json"
-FAVORITES_FILE = ROOT_DIR / ".favorites.json"
-ALERTS_FILE = ROOT_DIR / ".alerts.json"
-PLAY_TRACKER_FILE = ROOT_DIR / ".play_tracker.json"
-MISSED_MOVERS_FILE = ROOT_DIR / ".missed_movers_history.json"
-USER_RATINGS_FILE = ROOT_DIR / ".user_ratings.json"
-SKIPPED_FILE = ROOT_DIR / ".skipped.json"  # tickers snoozed until a date
-FINRA_CACHE_DIR = ROOT_DIR / ".finra_cache"  # daily off-exchange short volume files
+STATE_FILE = STATE_DIR / "regime_state.json"
+SECTOR_STATE_FILE = STATE_DIR / "sector_state.json"
+PICKS_HISTORY_FILE = STATE_DIR / "picks_history.json"
+LAST_SCAN_FILE = STATE_DIR / "last_scan.json"
+ADAPTIVE_STATE_FILE = STATE_DIR / "adaptive_state.json"
+USER_PREFS_FILE = STATE_DIR / "user_preferences.json"
+FAVORITES_FILE = STATE_DIR / "favorites.json"
+ALERTS_FILE = STATE_DIR / "alerts.json"
+PLAY_TRACKER_FILE = STATE_DIR / "play_tracker.json"
+MISSED_MOVERS_FILE = STATE_DIR / "missed_movers_history.json"
+USER_RATINGS_FILE = STATE_DIR / "user_ratings.json"
+SKIPPED_FILE = STATE_DIR / "skipped.json"  # tickers snoozed until a date
+FINRA_CACHE_DIR = CACHE_DIR / "finra"  # daily off-exchange short volume files
 SKIP_DAYS_DEFAULT = 14  # let a big move settle before looking again
 
 # How close a rung must be to show in APPROACHING, as a percentage.
@@ -326,10 +334,10 @@ PILLAR_DEFAULTS = {
 }
 
 # Sector cache for when yfinance fails
-SECTOR_CACHE_FILE = ROOT_DIR / ".sector_cache.json"
+SECTOR_CACHE_FILE = CACHE_DIR / "sector_cache.json"
 
 # Fundamental data cache (24h expiry — fundamentals don't change intraday)
-FUNDAMENTAL_CACHE_FILE = ROOT_DIR / ".fundamental_cache.json"
+FUNDAMENTAL_CACHE_FILE = CACHE_DIR / "fundamental_cache.json"
 
 # Value grade thresholds (0-100 score → letter grade)
 # Direction-aware: longs reward good fundamentals, shorts reward bad fundamentals

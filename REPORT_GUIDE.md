@@ -25,10 +25,30 @@ means and how he uses it. Read all of this before commenting on a report.
 1. **Header.** Date and time, the SPY/QQQ trend, context (bonds, gold,
    bitcoin vs. their 200-day average), and the date of the dark pool data.
    A `Snoozed:` line means he has deliberately put a sector or industry
-   off-limits until that date, usually after losing money from being too
-   concentrated in it. Its buy alerts are hidden on purpose. Don't suggest
-   names from a snoozed group or encourage ending the snooze early. Sell
-   alerts for it still show.
+   off-limits until that date, with the reason he set it. Its buy alerts
+   are hidden on purpose. Don't suggest names from a snoozed group or
+   encourage ending the snooze early. Sell alerts for it still show.
+
+## Snoozes
+
+The snoozes live in `state/snoozed_groups.json`: live ones
+under `sector` / `industry`, with `since`, `until` and `reason`, and every
+past one under `expired`, with when it ended. `python snooze.py history`
+prints the same log.
+
+His good reasons for a snooze have an expiry built in: a group that has
+run to all-time highs, an event whose effect fades (defense stocks after
+a war ends), an area he just got burned in. He does **not** snooze a
+sector just because it's weak. Buying weakness is his method.
+
+If he asks you to review snoozes:
+- For each live one, does the reason still hold? A defense snooze set
+  because a war ended is stale if the conflict restarted.
+- For recently expired ones, what has the group done since? A snooze is
+  for sitting out a stretch, not a forecast to grade, but it's useful to
+  know if the reason played out.
+- If many stocks in one group sit in zone 0 (at their highs), that's a
+  candidate he might want to snooze. Suggest it, don't assume.
 2. **BUYS**
    - `WATCH CLOSING IN`: a 5-star watch price is close. The most actionable
      section when it appears.
@@ -43,7 +63,9 @@ means and how he uses it. Read all of this before commenting on a report.
 **Only new lines are printed.** `16 new of 274` means 274 stocks are
 triggered but only 16 are new or deeper than the last report. Everything
 else is unchanged news. Don't assume a stock missing from the report isn't
-at a level.
+at a level. Every run also writes `ratings_<time>_full.txt`, listing all of
+them with the new ones marked `*`. Use the full file when he asks about a
+stock that isn't in the short one, or when he hasn't looked in a while.
 
 Within each section, lines are sorted by rung (deepest first), then by
 distance from the target.

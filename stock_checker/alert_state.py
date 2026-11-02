@@ -11,9 +11,9 @@ triggering is dropped, so if it comes back later it counts as new again.
 import json
 from datetime import date
 
-from .constants import ROOT_DIR
+from .constants import STATE_DIR
 
-ALERT_STATE_FILE = ROOT_DIR / ".alert_state.json"
+ALERT_STATE_FILE = STATE_DIR / "alert_state.json"
 
 
 def load_state() -> dict:

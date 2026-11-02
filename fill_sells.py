@@ -1,4 +1,4 @@
-"""Generate sell (resistance) ladders and write them to .user_ratings.json.
+"""Generate sell (resistance) ladders and write them to state/user_ratings.json.
 
 The mirror of fill_levels. Where a buy ladder looks for support below spot -
 shelves, unfilled gap-ups, pivot lows, rising MAs climbing to meet a falling

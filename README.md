@@ -44,6 +44,20 @@ cp .env.example .env                   # Alpaca credentials
 python -m stock_checker
 ```
 
-`config.json` and `.env` hold credentials and are gitignored. Runtime state
-(ratings, caches, alert history) is written to dotfiles in the project root and
-is likewise excluded.
+`config.json` and `.env` hold credentials and are gitignored.
+
+## Where things live
+
+Runtime files are gitignored and sorted by how much they matter:
+
+| Folder | Holds | If lost |
+|---|---|---|
+| `state/` | Ratings and ladders, alert history, mutes, skips, sector snoozes, the shadow-ladder test | Gone - back it up |
+| `cache/` | Fundamentals, sectors, FINRA dark pool files | Refetched on the next run |
+| `backups/` | Dated copies of earlier ratings and config | Nothing breaks |
+| `reports/` | Each run's report, plus a `_full` version listing every name | Nothing breaks |
+
+Each run writes two reports: `ratings_<time>.txt` shows only what is new
+since the last run, and `ratings_<time>_full.txt` shows every triggered and
+approaching name with the new ones marked `*`. See `REPORT_GUIDE.md` for how
+to read them.

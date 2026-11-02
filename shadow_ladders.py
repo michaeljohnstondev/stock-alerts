@@ -1,6 +1,6 @@
 """Shadow ladders - fresh buy ladders kept beside the live ones, for comparison.
 
-The live ladders in .user_ratings.json were mostly built in August off
+The live ladders in state/user_ratings.json were mostly built in August off
 August's price structure. This builds a second set from today's structure
 with the same fill_levels logic, WITHOUT touching the live file, then scores
 both sets against what price actually does from here on.
@@ -8,7 +8,7 @@ both sets against what price actually does from here on.
     python shadow_ladders.py generate     # build fresh set + snapshot live set
     python shadow_ladders.py compare      # score both against price since then
 
-generate also freezes a copy of the live ladders, so editing .user_ratings.json
+generate also freezes a copy of the live ladders, so editing state/user_ratings.json
 afterwards does not move the goalposts - both sets start the race together.
 
 How a rung is scored (buy side):
@@ -49,11 +49,11 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 
-from stock_checker.constants import ROOT_DIR, USER_RATINGS_FILE
+from stock_checker.constants import STATE_DIR, USER_RATINGS_FILE
 from stock_checker.data import fetch_stock_data
 from fill_levels import ladder_for, _atr_pct, MIN_STEP_FLOOR, MIN_STEP_CAP
 
-SHADOW_FILE = ROOT_DIR / ".shadow_ladders.json"
+SHADOW_FILE = STATE_DIR / "shadow_ladders.json"
 
 
 # Same four lines suggest_levels.project_mas projects from

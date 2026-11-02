@@ -11,9 +11,9 @@ would defeat the point of a ladder.
 import json
 from datetime import date, timedelta
 
-from .constants import ROOT_DIR
+from .constants import STATE_DIR
 
-MUTED_FILE = ROOT_DIR / ".muted.json"
+MUTED_FILE = STATE_DIR / "muted.json"
 MUTE_DAYS_DEFAULT = 14
 
 

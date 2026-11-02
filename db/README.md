@@ -10,7 +10,7 @@ the report runs normally and prints one warning.
 
 ## Why
 
-`.alert_state.json` is a **state snapshot** — it stores the deepest rung
+`state/alert_state.json` is a **state snapshot** — it stores the deepest rung
 per ticker per side and overwrites itself every run. That answers exactly
 one question ("deeper than last time?") and forgets everything else.
 
@@ -85,10 +85,10 @@ Imported from JSON:
 
 | Table | Source |
 |---|---|
-| `tickers` | `.sector_cache.json` |
-| `rating_levels` | `.user_ratings.json` — buys + sells flattened, one row per rung |
-| `fundamentals` | `.fundamental_cache.json` — typed columns + JSONB overflow |
-| `suppressions` | `.skipped.json` + `.muted.json` |
+| `tickers` | `cache/sector_cache.json` |
+| `rating_levels` | `state/user_ratings.json` — buys + sells flattened, one row per rung |
+| `fundamentals` | `cache/fundamental_cache.json` — typed columns + JSONB overflow |
+| `suppressions` | `state/skipped.json` + `state/muted.json` |
 
 Written per run, and previously not persisted at all:
 
@@ -98,7 +98,7 @@ Written per run, and previously not persisted at all:
 | `price_observations` | The live price each run fetches and discards. |
 | `alert_events` | Every rung evaluated, with `pct_away` / `triggered` / `escalated`. |
 | `value_scores` | `score_value()` output — grade plus four sub-scores. |
-| `sector_snapshots` | Accumulates instead of overwriting `.sector_state.json`. |
+| `sector_snapshots` | Accumulates instead of overwriting `state/sector_state.json`. |
 | `dark_pool_daily` | FINRA off-exchange short volume per symbol per day. Outlives the ~7-week `.finra_cache/`. |
 
 ## Migrations
