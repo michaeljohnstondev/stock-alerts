@@ -321,8 +321,10 @@ def run_report() -> tuple:
     buy_near.sort(key=lambda x: (-x["rating"], x["pct_away"]))
     sell_near.sort(key=lambda x: (-x["rating"], x["pct_away"]))
 
-    # Generate report
-    path, text = write_ratings_report(
+    # Generate report - twice. The short one is what you read; the full one
+    # lists every triggered and approaching name, so a report you skimmed
+    # or skipped never costs you a ticker. Same data, same timestamp.
+    report_args = dict(
         buy_alerts=buy_alerts,
         buy_near=buy_near,
         sell_alerts=sell_alerts,
@@ -335,12 +337,15 @@ def run_report() -> tuple:
         snoozes=snoozes,
         hidden=hidden,
     )
+    path, text = write_ratings_report(**report_args)
+    full_path, _ = write_ratings_report(**report_args, only_new=False)
 
     # Also write sector report
     write_sector_report(sector_rotation, sector_changes,
                         market_trends=market_trends)
 
     print(f"\n  Report saved: {path}")
+    print(f"  Full report:  {full_path}  (every name, * = new)")
     print(f"  API calls: {get_api_call_count()}")
 
     # Persist the run. Additive and fail-soft: the JSON state files above
@@ -454,23 +459,33 @@ def write_ratings_report(buy_alerts, buy_near,
                           sell_alerts, sell_near,
                           sector_rotation, sector_changes,
                           market_trends, market_context,
-                          dp_as_of=None, snoozes=None, hidden=None) -> tuple:
-    """Write the ratings-based report - flagged lines only."""
+                          dp_as_of=None, snoozes=None, hidden=None,
+                          only_new=True) -> tuple:
+    """Write the ratings report.
+
+    only_new=True: flagged lines only - what is new or deeper since last run.
+    only_new=False: every triggered and approaching name, new ones still
+    marked * - written to ratings_<time>_full.txt alongside the short one.
+    """
     totals = (len(buy_alerts), len(buy_near), len(sell_alerts), len(sell_near))
     buy_total, buy_near_total, sell_total, sell_near_total = totals
-    buy_alerts = _escalated_only(buy_alerts)
-    buy_near = _escalated_only(buy_near)
-    sell_alerts = _escalated_only(sell_alerts)
-    sell_near = _escalated_only(sell_near)
+    if only_new:
+        buy_alerts = _escalated_only(buy_alerts)
+        buy_near = _escalated_only(buy_near)
+        sell_alerts = _escalated_only(sell_alerts)
+        sell_near = _escalated_only(sell_near)
+    new = lambda items: len(_escalated_only(items))
+    shown = "" if only_new else "  (all shown, * = new)"
 
     REPORTS_DIR.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
-    report_path = REPORTS_DIR / f"ratings_{timestamp}.txt"
+    suffix = "" if only_new else "_full"
+    report_path = REPORTS_DIR / f"ratings_{timestamp}{suffix}.txt"
 
     L = []
     L.append("")
     L.append("  ================================================================")
-    L.append("    STOCK RATINGS REPORT")
+    L.append("    STOCK RATINGS REPORT" + ("" if only_new else " - FULL"))
     L.append(f"    {datetime.now().strftime('%A, %B %d %Y  %I:%M %p')}")
     L.append("  ================================================================")
     L.append("")
@@ -496,8 +511,9 @@ def write_ratings_report(buy_alerts, buy_near,
         for name, v in sorted(groups.items()):
             n = len((hidden or {}).get(name, ()))
             until = datetime.strptime(v["until"], "%Y-%m-%d").strftime("%b %d")
-            L.append(f"    Snoozed:  {name} until {until} - buys hidden "
-                     f"({n} at or near a rung)")
+            why = f" - {v['reason']}" if v.get("reason") else ""
+            L.append(f"    Snoozed:  {name} until {until}{why} "
+                     f"(buys hidden: {n} at or near a rung)")
     L.append("")
 
     # ==================== BUYS ====================
@@ -512,24 +528,24 @@ def write_ratings_report(buy_alerts, buy_near,
     rest_near = [i for i in buy_near if i["rating"] != 5]
 
     if watch_near:
-        L.append(f"  >>> WATCH CLOSING IN — {len(watch_near)} new within "
-                 f"{NEAR_PCT_BY_RATING[5]:.1f}% of a 5-star price <<<")
+        L.append(f"  >>> WATCH CLOSING IN — {new(watch_near)} new of {len(watch_near)} within "
+                 f"{NEAR_PCT_BY_RATING[5]:.1f}% of a 5-star price <<<{shown}")
         L.append("")
         for item in watch_near:
             L.append(_fmt_item(item, "buy"))
         L.append("")
 
     if buy_alerts:
-        L.append(f"  *** TRIGGERED — {len(buy_alerts)} new of {buy_total} "
-                 f"at or below your buy price ***")
+        L.append(f"  *** TRIGGERED — {new(buy_alerts)} new of {buy_total} "
+                 f"at or below your buy price ***{shown}")
         L.append("")
         for item in buy_alerts:
             L.append(_fmt_item(item, "buy"))
         L.append("")
 
     if rest_near:
-        L.append(f"  APPROACHING — {len(rest_near)} new of {buy_near_total} "
-                 f"within {NEAR_PCT:.0f}% of buy price")
+        L.append(f"  APPROACHING — {new(rest_near)} new of {buy_near_total} "
+                 f"within {NEAR_PCT:.0f}% of buy price{shown}")
         L.append("")
         for item in rest_near:
             L.append(_fmt_item(item, "buy"))
@@ -550,16 +566,16 @@ def write_ratings_report(buy_alerts, buy_near,
     L.append("")
 
     if sell_alerts:
-        L.append(f"  *** TRIGGERED — {len(sell_alerts)} new of {sell_total} "
-                 f"at or above your sell price ***")
+        L.append(f"  *** TRIGGERED — {new(sell_alerts)} new of {sell_total} "
+                 f"at or above your sell price ***{shown}")
         L.append("")
         for item in sell_alerts:
             L.append(_fmt_item(item, "sell"))
         L.append("")
 
     if sell_near:
-        L.append(f"  APPROACHING — {len(sell_near)} new of {sell_near_total} "
-                 f"within 5% of sell price")
+        L.append(f"  APPROACHING — {new(sell_near)} new of {sell_near_total} "
+                 f"within 5% of sell price{shown}")
         L.append("")
         for item in sell_near:
             L.append(_fmt_item(item, "sell"))
