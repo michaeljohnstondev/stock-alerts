@@ -28,6 +28,10 @@ means and how he uses it. Read all of this before commenting on a report.
    off-limits until that date, with the reason he set it. Its buy alerts
    are hidden on purpose. Don't suggest names from a snoozed group or
    encourage ending the snooze early. Sell alerts for it still show.
+   A `Held:` line gives how many stocks he owns and the date of that list.
+   Held stocks show **sells only**: no buy rungs, no zone entries. Once he
+   owns it he doesn't use the buy side. If the date is old, a stock he sold
+   may still be hidden, so suggest he send fresh positions.
    A `Broken:` line counts ladders that price has fallen through and
    stayed under (last 3 closes more than one ATR below the deepest rung).
    Auto ones are ready for `python roll_ladders.py`; hand-set ones need

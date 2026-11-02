@@ -24,7 +24,8 @@ from datetime import date
 
 import numpy as np
 
-from stock_checker.constants import STATE_DIR, USER_RATINGS_FILE
+from stock_checker.constants import USER_RATINGS_FILE
+from stock_checker.holdings import load_held
 from stock_checker.data import fetch_stock_data, get_live_price
 from suggest_levels import STRUCTURE_DAYS, _tick, _nice, price_profile
 from fill_levels import _atr_pct, MIN_STEP_FLOOR, MIN_STEP_CAP
@@ -34,20 +35,7 @@ BELOW_SPOT = 0.97       # resistance just underfoot still counts
 WEIGHTS = {"shelf": 3.0, "gap": 3.0, "pivot": 2.0, "ma": 1.5}
 CONFLUENCE_TOL = 0.02
 
-# What you hold - quantity and cost basis per share, for reporting the gain at
-# each rung. Lives in state/ (gitignored) because positions and cost basis are
-# private; this file is in a public repo. Shape:
-#   {"as_of": "YYYY-MM-DD", "positions": {"TICKER": [qty, basis], ...}}
-HOLDINGS_FILE = STATE_DIR / "holdings.json"
-
-
-def load_held() -> dict:
-    if not HOLDINGS_FILE.exists():
-        return {}
-    raw = json.loads(HOLDINGS_FILE.read_text(encoding="utf-8"))
-    return {t: tuple(v) for t, v in raw.get("positions", {}).items()}
-
-
+# What you hold, for reporting the gain at each rung (state/holdings.json)
 HELD = load_held()
 
 

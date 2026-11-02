@@ -27,6 +27,7 @@ from .report import write_sector_report
 from .mutes import load_mutes, is_muted
 from .group_snooze import load_snoozes, snoozed_group
 from .ladder_roll import atr_pct, is_dead, ladder_number
+from .holdings import load_holdings
 from .alert_state import (load_state, save_state, mark_escalations,
                           record, ALERT_STATE_FILE)
 
@@ -242,6 +243,10 @@ def run_report() -> tuple:
     snoozes = load_snoozes()
     hidden = {}  # snoozed group -> tickers kept off the buy side
     zones_now = {}  # ticker -> (zone, item for the zone-entry line)
+    # Once you own it, only the sell side matters - buys and zone entries for
+    # held names are left out. A name dropped from holdings comes back.
+    holdings = load_holdings()
+    held = set(holdings.get("positions", {}))
     dead = {"auto": 0, "hand": 0}  # ladders ready for roll_ladders.py
 
     # Build buy and sell lists (triggered + within 5% only)
@@ -266,18 +271,21 @@ def run_report() -> tuple:
         group = snoozed_group(ticker, snoozes)
         high = td.get("high_52w")
         zone = _zone(price, high)
-        if zone is not None and not group:
+        if zone is not None and not group and ticker not in held:
             zones_now[ticker] = (zone, {
                 "ticker": ticker, "price": price, "zone": zone,
                 "off_high": (1 - price / high) * 100,
                 "earnings": earnings, "value": value, "dp": dark_pool.get(ticker),
                 "ladder": ladder_number(data), "auto": data.get("source") == "auto",
             })
-        if is_dead(data.get("buys", []), td.get("closes", []), td.get("atr")):
+        if ticker not in held and is_dead(data.get("buys", []), td.get("closes", []),
+                                          td.get("atr")):
             dead["auto" if data.get("source") == "auto" else "hand"] += 1
 
         # Process buys
-        for entry in data.get("buys", []):
+        for entry in ([] if ticker in held else data.get("buys", [])):
+            if entry.get("filled"):
+                continue  # you already bought here - the next rung is the news
             info = _classify_entry(price, entry, "buy")
             all_evals.append((ticker, "buy", info, price))
             item = {
@@ -395,6 +403,7 @@ def run_report() -> tuple:
         hidden=hidden,
         zone_entries=zone_entries,
         dead=dead,
+        holdings=holdings,
     )
     path, text = write_ratings_report(**report_args)
     full_path, _ = write_ratings_report(**report_args, only_new=False)
@@ -536,7 +545,7 @@ def write_ratings_report(buy_alerts, buy_near,
                           sector_rotation, sector_changes,
                           market_trends, market_context,
                           dp_as_of=None, snoozes=None, hidden=None,
-                          zone_entries=None, dead=None,
+                          zone_entries=None, dead=None, holdings=None,
                           only_new=True) -> tuple:
     """Write the ratings report.
 
@@ -591,6 +600,11 @@ def write_ratings_report(buy_alerts, buy_near,
             why = f" - {v['reason']}" if v.get("reason") else ""
             L.append(f"    Snoozed:  {name} until {until}{why} "
                      f"(buys hidden: {n} at or near a rung)")
+    if holdings and holdings.get("positions"):
+        # the date is the point: sell something and forget to say so, and it
+        # stays off the buy side until this list is refreshed
+        L.append(f"    Held:     {len(holdings['positions'])} positions as of"
+                 f" {holdings.get('as_of', '?')} - buys hidden, sells only")
     if dead and (dead["auto"] or dead["hand"]):
         L.append(f"    Broken:   {dead['auto']} auto ladders through their floor"
                  f" (python roll_ladders.py), {dead['hand']} hand-set to review")
