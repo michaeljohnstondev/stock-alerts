@@ -26,6 +26,7 @@ from .darkpool import score_all as score_dark_pool
 from .report import write_sector_report
 from .mutes import load_mutes, is_muted
 from .group_snooze import load_snoozes, snoozed_group
+from .ladder_roll import atr_pct, is_dead, ladder_number
 from .alert_state import (load_state, save_state, mark_escalations,
                           record, ALERT_STATE_FILE)
 
@@ -72,6 +73,9 @@ def _fetch_ticker_data(ticker: str, earnings_calendar: dict) -> dict:
     if not df.empty:
         price = float(df["Close"].iloc[-1])
         result["high_52w"] = float(df["High"].max())
+        # for spotting a ladder price has fallen through and stayed under
+        result["closes"] = [float(c) for c in df["Close"].tail(5)]
+        result["atr"] = atr_pct(df) if len(df) > 15 else None
     result["price"] = price
 
     # Earnings proximity
@@ -94,6 +98,32 @@ def _zone(price, high) -> int | None:
         return 5  # "at or under 25%" - inclusive, as the band is defined
     drawdown = 1 - price / high
     return next((z for cap, z in ZONE_BANDS if drawdown <= cap), 5)
+
+
+def _zone_entries(zones_now: dict, state: dict, seed: bool) -> list:
+    """Stocks that dropped into a deeper zone than any reported lately.
+
+    Every stock has every zone, chart structure or not, so this keeps
+    watching a name all the way down even when it has no rungs left.
+
+    The mark is the deepest zone reported, not yesterday's zone, so a stock
+    see-sawing across a boundary is not news every other day. It resets
+    once the stock climbs two zones back up.
+    """
+    marks = state.get("zones")
+    first = seed or marks is None
+    marks = marks or {}
+    out = []
+    for ticker, (zone, item) in zones_now.items():
+        mark = marks.get(ticker)
+        if mark is not None and zone <= mark - 2:
+            mark = None  # recovered - the next drop counts again
+        if not first and mark is not None and zone > mark:
+            out.append({**item, "was": mark})
+        marks[ticker] = zone if mark is None else max(mark, zone)
+    state["zones"] = {t: z for t, z in marks.items() if t in zones_now}
+    out.sort(key=lambda x: (-x["zone"], -x["off_high"]))
+    return out
 
 
 def _deepest_only(alerts: list) -> list:
@@ -211,6 +241,8 @@ def run_report() -> tuple:
     mutes = load_mutes()
     snoozes = load_snoozes()
     hidden = {}  # snoozed group -> tickers kept off the buy side
+    zones_now = {}  # ticker -> (zone, item for the zone-entry line)
+    dead = {"auto": 0, "hand": 0}  # ladders ready for roll_ladders.py
 
     # Build buy and sell lists (triggered + within 5% only)
     buy_alerts = []
@@ -232,6 +264,17 @@ def run_report() -> tuple:
         earnings = td.get("earnings", {})
         value = td.get("value", {})
         group = snoozed_group(ticker, snoozes)
+        high = td.get("high_52w")
+        zone = _zone(price, high)
+        if zone is not None and not group:
+            zones_now[ticker] = (zone, {
+                "ticker": ticker, "price": price, "zone": zone,
+                "off_high": (1 - price / high) * 100,
+                "earnings": earnings, "value": value, "dp": dark_pool.get(ticker),
+                "ladder": ladder_number(data), "auto": data.get("source") == "auto",
+            })
+        if is_dead(data.get("buys", []), td.get("closes", []), td.get("atr")):
+            dead["auto" if data.get("source") == "auto" else "hand"] += 1
 
         # Process buys
         for entry in data.get("buys", []):
@@ -243,7 +286,11 @@ def run_report() -> tuple:
                 "earnings": earnings,
                 "value": value,
                 "dp": dark_pool.get(ticker),
-                "zone": _zone(price, td.get("high_52w")),
+                "zone": zone,
+                # where the rung itself sits in the stock's 52-week range
+                "rung_zone": _zone(entry["price"], high),
+                # 2+ means earlier ladders were broken through and rolled
+                "ladder": ladder_number(data),
                 # How many rungs this ticker has, so the report can say
                 # (2/4) on a four-rung ladder instead of always (2/3)
                 "rungs": len(data.get("buys", [])),
@@ -276,7 +323,7 @@ def run_report() -> tuple:
                 "earnings": earnings,
                 "value": value,
                 "dp": dark_pool.get(ticker),
-                "zone": _zone(price, td.get("high_52w")),
+                "zone": zone,
                 "rungs": len(data.get("sells", [])),
                 "auto": data.get("sells_source") == "auto",
                 **info,
@@ -306,6 +353,16 @@ def run_report() -> tuple:
     mark_escalations(sell_alerts, state, "sell", seed)
     mark_escalations(buy_near, state, "buy_near", seed)
     mark_escalations(sell_near, state, "sell_near", seed)
+    # A rolled ladder starts over at rung 1, which mark_escalations would read
+    # as shallower than the old rung 4. A new ladder number is news itself.
+    prev_ladders = state.get("ladders")
+    if prev_ladders is not None:
+        for item in buy_alerts + buy_near:
+            if item["ladder"] > prev_ladders.get(item["ticker"], 1):
+                item["escalated"] = True
+    state["ladders"] = {t: ladder_number(d) for t, d in ratings.items()
+                        if ladder_number(d) > 1}
+    zone_entries = _zone_entries(zones_now, state, seed)
     record(buy_alerts, state, "buy")
     record(sell_alerts, state, "sell")
     record(buy_near, state, "buy_near")
@@ -336,6 +393,8 @@ def run_report() -> tuple:
         dp_as_of=dp_as_of,
         snoozes=snoozes,
         hidden=hidden,
+        zone_entries=zone_entries,
+        dead=dead,
     )
     path, text = write_ratings_report(**report_args)
     full_path, _ = write_ratings_report(**report_args, only_new=False)
@@ -441,9 +500,26 @@ def _fmt_item(item: dict, side: str) -> str:
         tags.append(val)
     tag_str = f"  [{' | '.join(tags)}]" if tags else ""
 
+    # L2 = second ladder, the first one broken through. Z = the rung's zone.
+    where = ""
+    if item.get("ladder", 1) > 1:
+        where += f" L{item['ladder']}"
+    if item.get("rung_zone") is not None:
+        where += f" Z{item['rung_zone']}"
+
     ticker = ticker + "$" if item.get("auto") else ticker
     ticker = ("*" + ticker) if item.get("escalated") else (" " + ticker)
-    return f"   {ticker:7s}  ${price:<9.2f}  {status:30s}  {stars:{max(5, rungs)}s} ({rating}/{rungs}){tag_str}"
+    return f"   {ticker:7s}  ${price:<9.2f}  {status:30s}  {stars:{max(5, rungs)}s} ({rating}/{rungs}){where:7s}{tag_str}"
+
+
+def _fmt_zone_entry(item: dict) -> str:
+    tags = [t for t in (_earn_tag(item.get("earnings", {})), _dp_tag(item.get("dp")),
+                        _val_tag(item.get("value", {}))) if t]
+    if item.get("ladder", 1) > 1:
+        tags.insert(0, f"L{item['ladder']}")
+    ticker = item["ticker"] + ("$" if item.get("auto") else "")
+    status = f"ZONE {item['was']} -> {item['zone']}  ({item['off_high']:.0f}% off high)"
+    return f"   *{ticker:7s} ${item['price']:<9.2f}  {status:30s}  [{' | '.join(tags)}]"
 
 
 def _escalated_only(items: list) -> list:
@@ -460,6 +536,7 @@ def write_ratings_report(buy_alerts, buy_near,
                           sector_rotation, sector_changes,
                           market_trends, market_context,
                           dp_as_of=None, snoozes=None, hidden=None,
+                          zone_entries=None, dead=None,
                           only_new=True) -> tuple:
     """Write the ratings report.
 
@@ -514,6 +591,9 @@ def write_ratings_report(buy_alerts, buy_near,
             why = f" - {v['reason']}" if v.get("reason") else ""
             L.append(f"    Snoozed:  {name} until {until}{why} "
                      f"(buys hidden: {n} at or near a rung)")
+    if dead and (dead["auto"] or dead["hand"]):
+        L.append(f"    Broken:   {dead['auto']} auto ladders through their floor"
+                 f" (python roll_ladders.py), {dead['hand']} hand-set to review")
     L.append("")
 
     # ==================== BUYS ====================
@@ -524,6 +604,15 @@ def write_ratings_report(buy_alerts, buy_near,
 
     # A 5-star closing in is the most actionable line in the report - a price
     # you chose deliberately and are waiting on. It goes above everything.
+    # Zone entries are news by construction - the same in both reports.
+    # Zone 5 sorts first: that is the step-in-and-analyze list.
+    if zone_entries:
+        L.append(f"  >>> ENTERED A DEEPER ZONE — {len(zone_entries)} <<<")
+        L.append("")
+        for item in zone_entries:
+            L.append(_fmt_zone_entry(item))
+        L.append("")
+
     watch_near = [i for i in buy_near if i["rating"] == 5]
     rest_near = [i for i in buy_near if i["rating"] != 5]
 

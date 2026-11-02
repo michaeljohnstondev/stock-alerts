@@ -14,6 +14,7 @@ earlier picks so the thresholds keep moving.
 | `suggest_levels.py` | Reads candidate buy levels off raw OHLCV |
 | `fill_levels.py` | Builds entry ladders from those levels |
 | `fill_sells.py` | The exit side of the same ladder |
+| `roll_ladders.py` | Replaces a ladder price has broken through, keeping the old one on record |
 | `rate_stocks.py` | Interactive review pass over the results |
 
 ### suggest_levels

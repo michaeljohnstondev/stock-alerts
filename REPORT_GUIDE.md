@@ -28,6 +28,52 @@ means and how he uses it. Read all of this before commenting on a report.
    off-limits until that date, with the reason he set it. Its buy alerts
    are hidden on purpose. Don't suggest names from a snoozed group or
    encourage ending the snooze early. Sell alerts for it still show.
+   A `Broken:` line counts ladders that price has fallen through and
+   stayed under (last 3 closes more than one ATR below the deepest rung).
+   Auto ones are ready for `python roll_ladders.py`; hand-set ones need
+   his review.
+
+2. **BUYS**
+   - `ENTERED A DEEPER ZONE`: stocks that just dropped into a deeper zone
+     than any reported lately, deepest first. This fires even for a stock
+     with no rungs left, so it keeps watching all the way down. A stock
+     has to climb two zones back up before a drop into the same zone
+     counts again.
+   - `WATCH CLOSING IN`: a 5-star watch price is close. The most actionable
+     section when it appears.
+   - `TRIGGERED`: price is at or below a buy rung.
+   - `APPROACHING`: within 5% above a rung. 1-star rungs are hidden here.
+3. **SELLS.** The same thing for sell ladders on stocks he holds.
+   `TRIGGERED` = at or above a sell price.
+4. **SECTOR ROTATION.** Sectors vs. SPY: 1-day / 10-day / 30-day relative
+   return, a composite score, LEADING/LAGGING status, and rank change
+   (`^2` = up two places).
+
+**Only new lines are printed.** `16 new of 274` means 274 stocks are
+triggered but only 16 are new or deeper than the last report. Everything
+else is unchanged news. Don't assume a stock missing from the report isn't
+at a level. Every run also writes `ratings_<time>_full.txt`, listing all of
+them with the new ones marked `*`. Use the full file when he asks about a
+stock that isn't in the short one, or when he hasn't looked in a while.
+
+Within each section, lines are sorted by rung (deepest first), then by
+distance from the target.
+
+## Rolled ladders
+
+When a ladder breaks, `roll_ladders.py` builds a new one from chart
+structure below the current price and saves the old rungs under `broken`
+in `state/user_ratings.json`. The ladder number goes up by one. Rung 5
+watch prices and hand-set ladders never roll on their own.
+
+So a rung number alone doesn't say how far a stock has fallen. **A rung 1
+on L3 means two whole ladders already gave way.** Read the rung, the L
+number and the zone together. An old broken rung above the price is now
+likely resistance on the way back up.
+
+If the new ladder found no structure below a fresh low, the stock has no
+buy rungs. It shows up only through zone entries until he sets rungs by
+hand.
 
 ## Snoozes
 
@@ -49,31 +95,11 @@ If he asks you to review snoozes:
   know if the reason played out.
 - If many stocks in one group sit in zone 0 (at their highs), that's a
   candidate he might want to snooze. Suggest it, don't assume.
-2. **BUYS**
-   - `WATCH CLOSING IN`: a 5-star watch price is close. The most actionable
-     section when it appears.
-   - `TRIGGERED`: price is at or below a buy rung.
-   - `APPROACHING`: within 5% above a rung. 1-star rungs are hidden here.
-3. **SELLS.** The same thing for sell ladders on stocks he holds.
-   `TRIGGERED` = at or above a sell price.
-4. **SECTOR ROTATION.** Sectors vs. SPY: 1-day / 10-day / 30-day relative
-   return, a composite score, LEADING/LAGGING status, and rank change
-   (`^2` = up two places).
-
-**Only new lines are printed.** `16 new of 274` means 274 stocks are
-triggered but only 16 are new or deeper than the last report. Everything
-else is unchanged news. Don't assume a stock missing from the report isn't
-at a level. Every run also writes `ratings_<time>_full.txt`, listing all of
-them with the new ones marked `*`. Use the full file when he asks about a
-stock that isn't in the short one, or when he hasn't looked in a while.
-
-Within each section, lines are sorted by rung (deepest first), then by
-distance from the target.
 
 ## One line, decoded
 
 ```
-*MELI$  $1684.45  1.5% above $1660.00  ***  (3/4)  [Zone 2 | EARN +2d | DP 1 (-) | Val:B(61) | Fwd P/E 29.3 (pricey) | ...]
+*MELI$  $1684.45  1.5% above $1660.00  ***  (3/4) L2 Z3  [Zone 2 | EARN +2d | DP 1 (-) | Val:B(61) | Fwd P/E 29.3 (pricey) | ...]
 ```
 
 | Piece | Meaning |
@@ -83,6 +109,8 @@ distance from the target.
 | `$1684.45` | Current price (last close, or live during market hours). |
 | `1.5% above $1660.00` | Distance to the rung. `BELOW` means triggered (price is through it). |
 | `***` / `(3/4)` | Rung 3 of a 4-rung ladder. More stars = deeper level, bigger commitment. |
+| `L2` | Second ladder: the first was broken through and rolled. Not shown on L1. |
+| `Z3` | The zone the **rung** sits in. `Zone 2` in the brackets is where the **stock** is now. |
 | `Zone 2` | How far below its 52-week high, explained below. |
 | `EARN +2d` / `EARN -1d` | Earnings in 2 days / reported 1 day ago. |
 | `DP 1 (-)` | Dark pool score, explained below. `(+)` / `(-)` / `(0)` = higher / lower / unchanged vs the previous trading day. |
@@ -171,7 +199,9 @@ one market stretch, with gaps of about one percentage point.
 Lead with what he should look at, not a recap of every line:
 
 1. **Watch prices closing in**, if any.
-2. **Zone 5 names.** His personal review list.
+2. **Zone 5 names**, especially ones that just entered it. His personal
+   review list. Then other zone entries, and any L2+ line, since those
+   stocks have already broken a whole ladder.
 3. **Deep rungs (3–4) triggered or within ~1%.** These are the big
    commitments.
 4. **Cautions:** DP 1–3 at a rung, especially with `(-)` or **earnings

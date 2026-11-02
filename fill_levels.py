@@ -19,10 +19,9 @@ import json
 import sys
 from datetime import date
 
-import numpy as np
-
 from stock_checker.constants import USER_RATINGS_FILE
 from stock_checker.data import fetch_stock_data, get_live_price
+from stock_checker.ladder_roll import atr_pct as _atr_pct
 from suggest_levels import (
     STRUCTURE_DAYS, find_shelves, find_pivot_lows, find_unfilled_gaps,
     project_mas, build_candidates, _nice,
@@ -32,15 +31,6 @@ RUNGS = 4
 MIN_STEP_FLOOR = 0.020   # rungs never closer than 2%
 MIN_STEP_CAP = 0.070     # ...nor forced further than 7% apart
 WEAK_ZONE_FRAC = 0.15    # drop zones scoring under this share of the best
-
-
-def _atr_pct(df, period: int = 14) -> float:
-    """Average true range as a fraction of price - the stock's own scale."""
-    high, low, close = df["High"], df["Low"], df["Close"]
-    prev = close.shift(1)
-    tr = np.maximum(high - low, np.maximum((high - prev).abs(), (low - prev).abs()))
-    atr = tr.tail(period).mean()
-    return float(atr / close.iloc[-1])
 
 
 def build_ladder(zones: list, cur: float, min_step: float) -> list:
@@ -167,7 +157,8 @@ def main():
             watch = [b for b in prev.get("buys", []) if b["rating"] == 5]
             if watch:
                 entry["buys"] = sorted(entry["buys"] + watch, key=lambda e: e["rating"])
-            for k in ("sells", "sells_source"):
+            # and the sell side plus the roll history (L number, broken ladders)
+            for k in ("sells", "sells_source", "sells_updated", "ladder", "broken"):
                 if k in prev:
                     entry[k] = prev[k]
             ratings[ticker] = entry
