@@ -25,6 +25,7 @@ from .scoring import score_value
 from .darkpool import score_all as score_dark_pool
 from .report import write_sector_report
 from .mutes import load_mutes, is_muted
+from .group_snooze import load_snoozes, snoozed_group
 from .alert_state import (load_state, save_state, mark_escalations,
                           record, ALERT_STATE_FILE)
 
@@ -38,6 +39,12 @@ except Exception:  # the Postgres layer is optional - report runs without it
 
     def record_dark_pool(_history):
         pass
+
+# Zone: how far below its 52-week high a stock sits. Fixed bands, so a zone
+# means the same thing on every stock and every date. Zone 5 is a stock at or
+# under 25% of its high - the point to step in and ask whether the drop was
+# warranted. (drawdown at or under, zone)
+ZONE_BANDS = [(0.10, 0), (0.25, 1), (0.40, 2), (0.55, 3), (0.75, 4)]
 
 # 1-star rungs in APPROACHING are the noisiest bucket - the shallowest level
 # on every ticker, all at once. Set False to bring them back.
@@ -57,11 +64,14 @@ def _fetch_ticker_data(ticker: str, earnings_calendar: dict) -> dict:
     """Fetch current price, earnings, and fundamentals for a single ticker."""
     result = {"ticker": ticker, "price": None, "earnings": None, "value": None}
 
-    # Current price — use last close (reliable), skip Alpaca (stale after hours)
+    # Current price — use last close (reliable), skip Alpaca (stale after hours).
+    # A year of bars costs the same one request as five days and carries the
+    # 52-week high the zone is measured from.
     price = None
-    df = fetch_stock_data(ticker, period="5d")
+    df = fetch_stock_data(ticker, period="1y")
     if not df.empty:
         price = float(df["Close"].iloc[-1])
+        result["high_52w"] = float(df["High"].max())
     result["price"] = price
 
     # Earnings proximity
@@ -75,6 +85,15 @@ def _fetch_ticker_data(ticker: str, earnings_calendar: dict) -> dict:
         result["value"] = score_value(fundamentals, "bullish")
 
     return result
+
+
+def _zone(price, high) -> int | None:
+    if not price or not high or high <= 0:
+        return None
+    if price / high <= 0.25:
+        return 5  # "at or under 25%" - inclusive, as the band is defined
+    drawdown = 1 - price / high
+    return next((z for cap, z in ZONE_BANDS if drawdown <= cap), 5)
 
 
 def _deepest_only(alerts: list) -> list:
@@ -190,6 +209,8 @@ def run_report() -> tuple:
     market_context = get_market_context()
 
     mutes = load_mutes()
+    snoozes = load_snoozes()
+    hidden = {}  # snoozed group -> tickers kept off the buy side
 
     # Build buy and sell lists (triggered + within 5% only)
     buy_alerts = []
@@ -210,6 +231,7 @@ def run_report() -> tuple:
 
         earnings = td.get("earnings", {})
         value = td.get("value", {})
+        group = snoozed_group(ticker, snoozes)
 
         # Process buys
         for entry in data.get("buys", []):
@@ -221,6 +243,7 @@ def run_report() -> tuple:
                 "earnings": earnings,
                 "value": value,
                 "dp": dark_pool.get(ticker),
+                "zone": _zone(price, td.get("high_52w")),
                 # How many rungs this ticker has, so the report can say
                 # (2/4) on a four-rung ladder instead of always (2/3)
                 "rungs": len(data.get("buys", [])),
@@ -231,6 +254,12 @@ def run_report() -> tuple:
             if is_muted(mutes, ticker, info["rating"], "buy"):
                 continue  # you already passed on this rung
             near_pct = NEAR_PCT_BY_RATING.get(info["rating"], NEAR_PCT)
+            if group:
+                # Still evaluated and recorded above; just not offered as a
+                # buy. Count it only if it would have made the report.
+                if info["triggered"] or info["pct_away"] <= near_pct:
+                    hidden.setdefault(group, set()).add(ticker)
+                continue
             if info["triggered"]:
                 buy_alerts.append(item)
             elif info["pct_away"] <= near_pct:
@@ -247,6 +276,7 @@ def run_report() -> tuple:
                 "earnings": earnings,
                 "value": value,
                 "dp": dark_pool.get(ticker),
+                "zone": _zone(price, td.get("high_52w")),
                 "rungs": len(data.get("sells", [])),
                 "auto": data.get("sells_source") == "auto",
                 **info,
@@ -302,6 +332,8 @@ def run_report() -> tuple:
         market_trends=market_trends,
         market_context=market_context,
         dp_as_of=dp_as_of,
+        snoozes=snoozes,
+        hidden=hidden,
     )
 
     # Also write sector report
@@ -364,7 +396,8 @@ def _dp_tag(dp: dict | None) -> str:
     """Dark pool score as a compact tag. 5 is normal, 10 hidden buying."""
     if not dp:
         return ""
-    return f"DP {dp['score']}"
+    trend = f" ({dp['trend']})" if dp.get("trend") else ""
+    return f"DP {dp['score']}{trend}"
 
 
 def _fmt_item(item: dict, side: str) -> str:
@@ -392,6 +425,8 @@ def _fmt_item(item: dict, side: str) -> str:
     val = _val_tag(item.get("value", {}))
 
     tags = []
+    if item.get("zone") is not None:
+        tags.append(f"Zone {item['zone']}")
     if earn:
         tags.append(earn)
     dp = _dp_tag(item.get("dp"))
@@ -419,7 +454,7 @@ def write_ratings_report(buy_alerts, buy_near,
                           sell_alerts, sell_near,
                           sector_rotation, sector_changes,
                           market_trends, market_context,
-                          dp_as_of=None) -> tuple:
+                          dp_as_of=None, snoozes=None, hidden=None) -> tuple:
     """Write the ratings-based report - flagged lines only."""
     totals = (len(buy_alerts), len(buy_near), len(sell_alerts), len(sell_near))
     buy_total, buy_near_total, sell_total, sell_near_total = totals
@@ -453,7 +488,16 @@ def write_ratings_report(buy_alerts, buy_near,
     if dp_as_of:
         # FINRA posts each file in the evening, so this trails by a day
         L.append(f"    Dark pool: FINRA off-exchange as of {dp_as_of.strftime('%a %b %d')}"
-                 f"  (DP 5 = normal, 10 = hidden buying, 1 = hidden selling)")
+                 f"  (DP 5 = normal, 10 = hidden buying, 1 = hidden selling;"
+                 f" +/-/0 = vs prior day)")
+    L.append("    Zone:     0 = within 10% of 52-week high ... 5 = at or under 25% of it")
+    # Snoozed groups go in the header, so a snooze is never forgotten
+    for lvl, groups in (snoozes or {}).items():
+        for name, v in sorted(groups.items()):
+            n = len((hidden or {}).get(name, ()))
+            until = datetime.strptime(v["until"], "%Y-%m-%d").strftime("%b %d")
+            L.append(f"    Snoozed:  {name} until {until} - buys hidden "
+                     f"({n} at or near a rung)")
     L.append("")
 
     # ==================== BUYS ====================

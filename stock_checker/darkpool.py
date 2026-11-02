@@ -14,8 +14,15 @@ heavy hidden buying. The score reads it on a 1-10 scale:
      5  normal - most stocks, most days
      1  strong hidden selling
 
-It is a confirmation check on a level you already like, not a signal on
-its own: a day behind, and it never says who started a trade.
+It is a check on a level you already like, not a signal on its own: a
+day behind, and it never says who started a trade. In the first seven
+weeks of history (Sep-Nov 2026) it worked best when it agreed with recent
+price: high DP on a rising stock kept rising, low DP on a falling stock
+kept lagging. High DP on a stock that had just dropped added little. So at
+a buy rung, which is always after a drop, low DP is the meaningful read.
+
+The trend mark compares with the previous trading day: + higher, - lower,
+0 unchanged.
 
 Fail-soft like the database layer: no network means no DP tags, and the
 report runs as usual.
@@ -134,7 +141,7 @@ def _z_at(rows: list, i: int) -> float | None:
     return (s / t - statistics.mean(ratios)) / sd
 
 
-def score(rows: list) -> dict | None:
+def score(rows: list, _trend: bool = True) -> dict | None:
     """Score the latest day in rows. None if there is not enough history."""
     if not rows:
         return None
@@ -163,8 +170,20 @@ def score(rows: list) -> dict | None:
         pts += -1 if pts > 5 else 1
 
     d, s, t = rows[last]
+    pts = max(1, min(10, pts))
+
+    # Trend vs the previous trading day - not the last scan, which can be
+    # two days or two weeks ago. Scored without its own trend, so this
+    # recurses exactly once.
+    prev = score(rows[:-1], _trend=False) if _trend else None
+    if prev is None:
+        trend = None
+    else:
+        trend = "+" if pts > prev["score"] else "-" if pts < prev["score"] else "0"
+
     return {
-        "score": max(1, min(10, pts)),
+        "score": pts,
+        "trend": trend,
         "z": round(z, 2),
         "ratio": round(s / t, 3),
         "avg_ratio": round(statistics.mean(

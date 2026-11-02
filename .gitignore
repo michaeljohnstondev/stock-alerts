@@ -21,6 +21,7 @@ config.json.bak
 .fundamental_cache.json
 .finra_cache/
 .shadow_ladders.json
+.snoozed_groups.json
 .user_ratings.json
 .user_ratings.json.*
 reports/
