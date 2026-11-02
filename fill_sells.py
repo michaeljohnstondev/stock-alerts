@@ -15,7 +15,7 @@ rather than just a price.
 Usage:
     python fill_sells.py --dry AVGO NFLX      # show what it would write
     python fill_sells.py AVGO NFLX            # write them
-    python fill_sells.py --held               # every ticker in HELD below
+    python fill_sells.py --held               # every position in state/holdings.json
 """
 
 import json
@@ -24,7 +24,7 @@ from datetime import date
 
 import numpy as np
 
-from stock_checker.constants import USER_RATINGS_FILE
+from stock_checker.constants import STATE_DIR, USER_RATINGS_FILE
 from stock_checker.data import fetch_stock_data, get_live_price
 from suggest_levels import STRUCTURE_DAYS, _tick, _nice, price_profile
 from fill_levels import _atr_pct, MIN_STEP_FLOOR, MIN_STEP_CAP
@@ -34,8 +34,21 @@ BELOW_SPOT = 0.97       # resistance just underfoot still counts
 WEIGHTS = {"shelf": 3.0, "gap": 3.0, "pivot": 2.0, "ma": 1.5}
 CONFLUENCE_TOL = 0.02
 
-# quantity, cost basis per share - for reporting gain at each rung
-HELD = {}  # positions removed from history
+# What you hold - quantity and cost basis per share, for reporting the gain at
+# each rung. Lives in state/ (gitignored) because positions and cost basis are
+# private; this file is in a public repo. Shape:
+#   {"as_of": "YYYY-MM-DD", "positions": {"TICKER": [qty, basis], ...}}
+HOLDINGS_FILE = STATE_DIR / "holdings.json"
+
+
+def load_held() -> dict:
+    if not HOLDINGS_FILE.exists():
+        return {}
+    raw = json.loads(HOLDINGS_FILE.read_text(encoding="utf-8"))
+    return {t: tuple(v) for t, v in raw.get("positions", {}).items()}
+
+
+HELD = load_held()
 
 
 def find_pivot_highs(df, window: int = 10) -> list:
@@ -210,7 +223,10 @@ def main():
             # tracked apart from "source" so an auto sell ladder does not
             # mislabel a hand-set buy ladder as auto
             entry["sells_source"] = "auto"
-            entry["updated"] = date.today().isoformat()
+            # Its own date: "updated" is when the BUY ladder was last
+            # reviewed, and rate_stocks re-rates by it. A sell rebuild must
+            # not make a stale buy ladder look freshly reviewed.
+            entry["sells_updated"] = date.today().isoformat()
             USER_RATINGS_FILE.write_text(json.dumps(ratings, indent=2), encoding="utf-8")
 
 
