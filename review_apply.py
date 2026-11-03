@@ -90,6 +90,24 @@ def rungs_below(ticker: str, anchor: float, count: int, start: int) -> list:
             continue
         seen.add(price)
         out.append({"price": price, "rating": start + len(out)})
+    # Out of chart structure (a fresh low): step down by the stock's own
+    # volatility instead, so the ladder still has its deep rungs. Tagged
+    # "dev" - a deviation rung, not a level the chart has proven.
+    # r["step"] may have been eased down to squeeze structure in; a deviation
+    # rung uses the stock's full volatility step (1.5x ATR, 2-7%)
+    from fill_levels import MIN_STEP_FLOOR, MIN_STEP_CAP, _atr_pct
+    from stock_checker.data import fetch_stock_data
+    try:
+        dev_step = min(MIN_STEP_CAP, max(MIN_STEP_FLOOR, _atr_pct(fetch_stock_data(ticker, period="3mo")) * 1.5))
+    except Exception:
+        dev_step = step
+    last = out[-1]["price"] if out else anchor
+    while len(out) < count:
+        price = _nice(last * (1 - dev_step), r["cur"])
+        if price <= 0 or price >= last:
+            break
+        out.append({"price": price, "rating": start + len(out), "dev": True})
+        last = price
     return out
 
 
@@ -106,6 +124,22 @@ def apply(ticker: str, entry: dict, mark: tuple, cur: float | None,
     if mark[0] == "b":
         _, dollars, shares, total = mark
         price = dollars / shares
+        # A fill at (within 1% of) a rung you set by hand: mark it and the
+        # rungs above it filled, keep the rest of your ladder as it is.
+        mine = [b for b in old if entry.get("source") != "auto" and not b.get("filled")
+                and abs(b["price"] / price - 1) <= 0.01]
+        if mine:
+            hit = mine[0]["rating"]
+            today_ = date.today().isoformat()
+            for b in old:
+                if b["rating"] <= hit:
+                    b["filled"] = today_
+                if b["rating"] == hit:
+                    b["price"] = round(price, 2)
+            note["bought"] = {"dollars": dollars, "price": round(price, 2), "rung": hit}
+            entry.setdefault("reviews", []).append(note)
+            entry["buys"] = sorted(old + watch, key=lambda b: b["rating"])
+            return entry, old
         # an add caps by the whole position's shares - about total / price
         n = rung or rung_for(dollars, round(total / price) if total else shares, total)
         # rungs above the one you reached: the deepest old rungs still

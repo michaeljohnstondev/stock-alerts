@@ -11,6 +11,8 @@
          --session ext   pre-market + regular + after-hours (Schwab "seamless")
          --session pm    after-hours only (about 4-8 PM ET)
          --session am    pre-market only (about 7-9:30 AM ET)
+       Add --gtc to keep it open until filled or cancelled (good-till-cancel)
+       instead of expiring at the end of the day.
 
     python trade.py orders              # today's orders on the account
     python trade.py cancel <order id>   # cancel a working order
@@ -128,7 +130,8 @@ SESSION_LABEL = {"normal": "regular hours", "ext": "extended hours (pre + regula
                  "pm": "after-hours only", "am": "pre-market only"}
 
 
-def preview(side: str, symbol: str, qty: float, limit: float, session: str = "normal"):
+def preview(side: str, symbol: str, qty: float, limit: float, session: str = "normal",
+            gtc: bool = False):
     from schwab.orders.equities import equity_buy_limit, equity_sell_limit
     c = _client()
     acct = _account_hash(c)
@@ -145,6 +148,9 @@ def preview(side: str, symbol: str, qty: float, limit: float, session: str = "no
     from schwab.orders.common import Session
     order = build(symbol, int(qty), f"{limit:.2f}")
     order.set_session(Session[SESSIONS[session]])
+    if gtc:
+        from schwab.orders.common import Duration
+        order.set_duration(Duration.GOOD_TILL_CANCEL)
     spec = order.build()
     pr = c.preview_order(acct, spec)
     body = pr.json() if pr.content else {}
@@ -157,12 +163,12 @@ def preview(side: str, symbol: str, qty: float, limit: float, session: str = "no
         return
     code = secrets.token_hex(3)
     pending = {"code": code, "side": side, "symbol": symbol, "qty": qty, "limit": limit,
-               "session": session,
+               "session": session, "gtc": gtc,
                "spec": spec, "created": datetime.now(timezone.utc).isoformat()}
     PENDING_FILE.write_text(json.dumps(pending, indent=2), encoding="utf-8")
     _log("preview", {k: pending[k] for k in ("code", "side", "symbol", "qty", "limit")})
     print(f"  PREVIEW  {side.upper()} {qty:g} {symbol} LIMIT ${limit:.2f}  "
-          f"(day order, {SESSION_LABEL[session]})")
+          f"({'good-till-cancel' if gtc else 'day order'}, {SESSION_LABEL[session]})")
     print(f"           total about ${qty * limit:,.2f}")
     for w in filter(None, warnings):  # Schwab sends some warnings with no text
         print(f"           Schwab note: {w}")
@@ -253,12 +259,15 @@ def cancel(order_id: str):
 def main():
     a = sys.argv[1:]
     session = "normal"
+    gtc = "--gtc" in a
+    if gtc:
+        a.remove("--gtc")
     if "--session" in a:
         i = a.index("--session")
         session = a[i + 1].lower()
         del a[i:i + 2]
     if len(a) == 5 and a[0] == "preview":
-        return preview(a[1].lower(), a[2], float(a[3]), float(a[4]), session)
+        return preview(a[1].lower(), a[2], float(a[3]), float(a[4]), session, gtc)
     if len(a) == 2 and a[0] == "send":
         return send(a[1])
     if a == ["orders"]:

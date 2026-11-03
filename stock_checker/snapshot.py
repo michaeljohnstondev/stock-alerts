@@ -15,11 +15,16 @@ from .market import fetch_earnings_calendar
 from .notes import load_notes
 
 
+def broker_price(ticker: str):
+    from .broker import price
+    return price(ticker)
+
+
 def take(ticker: str, entry: dict) -> dict:
     # imported here: ratings_runner imports the page code, which reads this
     from .ratings_runner import _fetch_ticker_data, _zone
     td = _fetch_ticker_data(ticker, fetch_earnings_calendar())
-    price = get_live_price(ticker) or td.get("price")
+    price = broker_price(ticker) or get_live_price(ticker) or td.get("price")
     high = td.get("high_52w")
     dp = (score_all([ticker])[0] or {}).get(ticker) or {}
     earn = td.get("earnings") or {}

@@ -213,6 +213,11 @@ def get_live_price(ticker: str, extended_hours: bool = False) -> float | None:
     Market hours: tries Alpaca (real-time IEX) first, falls back to yfinance fast_info.
     Extended hours: uses yfinance t.info for post/pre-market prices (Alpaca free has no AH).
     Returns None if unavailable — caller should fall back to df['Close'].iloc[-1]."""
+    # Schwab first - consolidated across all exchanges, after-hours included
+    from .broker import price as broker_price
+    p = broker_price(ticker)
+    if p is not None and p > 0:
+        return p
     # During market hours: Alpaca real-time > yfinance fast_info
     if not extended_hours:
         p = _alpaca_quote(ticker)
