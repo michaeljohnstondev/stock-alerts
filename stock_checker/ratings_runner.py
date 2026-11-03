@@ -241,8 +241,24 @@ def _classify_entry(current_price: float, entry: dict, side: str) -> dict:
     }
 
 
+def _sync_broker():
+    """Pull positions from Schwab before the report, so fills since the last
+    run - yours or through trade.py - are recorded. Fail-soft: no login or no
+    connection prints one line and the report runs on the last holdings."""
+    try:
+        from schwab_sync import TOKEN_FILE, sync
+        if not TOKEN_FILE.exists():
+            return
+        changes = sync(go=True, quiet=True)
+        print(f"  Schwab sync: {len(changes)} change(s) recorded" if changes
+              else "  Schwab sync: holdings up to date")
+    except BaseException as e:  # SystemExit included - never stop the scan
+        print(f"  Schwab sync skipped ({str(e)[:80]}) - log in again: python schwab_sync.py --login")
+
+
 def run_report() -> tuple:
     """Run the ratings-based report. Returns (report_path, report_text)."""
+    _sync_broker()
     ratings = load_ratings()
     if not ratings:
         print("  No ratings found. Run rate_stocks.py first.")

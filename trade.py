@@ -7,6 +7,11 @@
        python trade.py send <code>
        Sends only that pending order, only within 5 minutes of the preview.
 
+       Add a session to trade outside regular hours (limit orders only, as always):
+         --session ext   pre-market + regular + after-hours (Schwab "seamless")
+         --session pm    after-hours only (about 4-8 PM ET)
+         --session am    pre-market only (about 7-9:30 AM ET)
+
     python trade.py orders              # today's orders on the account
     python trade.py cancel <order id>   # cancel a working order
 
@@ -118,7 +123,12 @@ def _check(c, acct_hash: str, side: str, symbol: str, qty: float, limit: float) 
     return problems
 
 
-def preview(side: str, symbol: str, qty: float, limit: float):
+SESSIONS = {"normal": "NORMAL", "ext": "SEAMLESS", "pm": "PM", "am": "AM"}
+SESSION_LABEL = {"normal": "regular hours", "ext": "extended hours (pre + regular + after)",
+                 "pm": "after-hours only", "am": "pre-market only"}
+
+
+def preview(side: str, symbol: str, qty: float, limit: float, session: str = "normal"):
     from schwab.orders.equities import equity_buy_limit, equity_sell_limit
     c = _client()
     acct = _account_hash(c)
@@ -130,7 +140,12 @@ def preview(side: str, symbol: str, qty: float, limit: float):
                          "why": problems})
         return
     build = equity_buy_limit if side == "buy" else equity_sell_limit
-    spec = build(symbol, int(qty), f"{limit:.2f}").build()
+    if session not in SESSIONS:
+        raise SystemExit("  --session must be one of: " + ", ".join(SESSIONS))
+    from schwab.orders.common import Session
+    order = build(symbol, int(qty), f"{limit:.2f}")
+    order.set_session(Session[SESSIONS[session]])
+    spec = order.build()
     pr = c.preview_order(acct, spec)
     body = pr.json() if pr.content else {}
     warnings = [m.get("message") for m in
@@ -142,12 +157,14 @@ def preview(side: str, symbol: str, qty: float, limit: float):
         return
     code = secrets.token_hex(3)
     pending = {"code": code, "side": side, "symbol": symbol, "qty": qty, "limit": limit,
+               "session": session,
                "spec": spec, "created": datetime.now(timezone.utc).isoformat()}
     PENDING_FILE.write_text(json.dumps(pending, indent=2), encoding="utf-8")
     _log("preview", {k: pending[k] for k in ("code", "side", "symbol", "qty", "limit")})
-    print(f"  PREVIEW  {side.upper()} {qty:g} {symbol} LIMIT ${limit:.2f}  (day order)")
+    print(f"  PREVIEW  {side.upper()} {qty:g} {symbol} LIMIT ${limit:.2f}  "
+          f"(day order, {SESSION_LABEL[session]})")
     print(f"           total about ${qty * limit:,.2f}")
-    for w in warnings:
+    for w in filter(None, warnings):  # Schwab sends some warnings with no text
         print(f"           Schwab note: {w}")
     print(f"  Not sent. To send: python trade.py send {code}   (valid 5 minutes)")
 
@@ -179,8 +196,37 @@ def send(code: str):
                                           "order_id": order_id, "status": r.status_code})
     if ok:
         print(f"  SENT  {p['side'].upper()} {p['qty']:g} {p['symbol']} @ ${p['limit']:.2f}  order {order_id}")
+        _record_if_filled(c, acct, order_id, p)
     else:
         print(f"  Schwab did not accept it ({r.status_code}): {r.text[:300]}")
+
+
+def _record_if_filled(c, acct: str, order_id: str, p: dict, wait_s: int = 15):
+    """Give the order a few seconds; if it fills, record it at the real fill
+    price (snapshot, ladder, holdings, sells) and refresh the page. If not,
+    the sync at the start of the next scan picks it up."""
+    import subprocess
+    import time
+    o = {}
+    for _ in range(wait_s // 3):
+        time.sleep(3)
+        o = c.get_order(order_id, acct).json()
+        if o.get("status") in ("FILLED", "CANCELED", "REJECTED", "EXPIRED"):
+            break
+    if o.get("status") != "FILLED":
+        print(f"  status {o.get('status', '?')} - it will be recorded by the sync at the next scan")
+        return
+    legs = [l for a in o.get("orderActivityCollection", []) for l in a.get("executionLegs", [])]
+    qty = sum(l["quantity"] for l in legs) or p["qty"]
+    price = sum(l["quantity"] * l["price"] for l in legs) / qty if legs else p["limit"]
+    print(f"  FILLED {qty:g} @ ${price:.2f}")
+    from record_buy import record, record_sell
+    if p["side"] == "buy":
+        record(p["symbol"], qty, price)
+    else:
+        record_sell(p["symbol"], qty, price)
+    subprocess.run([sys.executable, "-m", "stock_checker.html_report"], capture_output=True)
+    print("  recorded, and the page is refreshed")
 
 
 def orders():
@@ -206,8 +252,13 @@ def cancel(order_id: str):
 
 def main():
     a = sys.argv[1:]
+    session = "normal"
+    if "--session" in a:
+        i = a.index("--session")
+        session = a[i + 1].lower()
+        del a[i:i + 2]
     if len(a) == 5 and a[0] == "preview":
-        return preview(a[1].lower(), a[2], float(a[3]), float(a[4]))
+        return preview(a[1].lower(), a[2], float(a[3]), float(a[4]), session)
     if len(a) == 2 and a[0] == "send":
         return send(a[1])
     if a == ["orders"]:

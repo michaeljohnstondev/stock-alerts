@@ -77,6 +77,42 @@ def record(ticker: str, shares: float, price: float | None = None,
     return entry
 
 
+def record_sell(ticker: str, shares: float, price: float | None = None,
+                note: str | None = None, update_holdings: bool = True) -> dict:
+    """File a sale in the ticker's history: shares, fill, P/L vs your cost and
+    the row as it stood when you sold. update_holdings=False when a sync is
+    about to set holdings from the broker anyway."""
+    ticker = ticker.upper()
+    ratings = json.loads(USER_RATINGS_FILE.read_text(encoding="utf-8"))
+    entry = ratings.setdefault(ticker, {"buys": []})
+    snap = take(ticker, entry)
+    if note:
+        snap["note"] = note
+    price = float(price) if price else snap["price"]
+    holdings = load_holdings()
+    positions = holdings.setdefault("positions", {})
+    qty, basis = positions.get(ticker, (0, 0))
+    pl = (price / basis - 1) * 100 if basis else None
+    entry.setdefault("reviews", []).append({
+        "date": date.today().isoformat(), "mark": "sold",
+        "sold": {"shares": shares, "price": round(price, 2), "basis": basis,
+                 "pl_pct": round(pl, 1) if pl is not None else None,
+                 "all": shares >= qty},
+        "snapshot": snap})
+    USER_RATINGS_FILE.write_text(json.dumps(ratings, indent=2), encoding="utf-8")
+    print("  %-6s sold      %g @ $%.2f%s" % (ticker, shares, price,
+                                             "  (%+.1f%% vs cost)" % pl if pl is not None else ""))
+    if update_holdings and qty:
+        left = qty - shares
+        if left > 0:
+            positions[ticker] = [left, basis]
+        else:
+            positions.pop(ticker, None)
+        holdings["as_of"] = date.today().isoformat()
+        HOLDINGS_FILE.write_text(json.dumps(holdings, indent=2), encoding="utf-8")
+    return entry
+
+
 def main():
     args = list(sys.argv[1:])
     price = _opt(args, "--price")

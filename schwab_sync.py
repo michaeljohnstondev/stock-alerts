@@ -96,14 +96,45 @@ def diff(mine: dict, theirs: dict) -> list:
     return out
 
 
-def main():
-    args = sys.argv[1:]
-    if "--login" in args:
-        return login()
-    if not TOKEN_FILE.exists():
-        raise SystemExit("  Not logged in yet. Run: python schwab_sync.py --login")
-    go, baseline = "--go" in args, "--baseline" in args
+def recent_fills(days: int = 7) -> dict:
+    """{(symbol, "BUY"|"SELL"): [(entered, qty, avg price)]} from filled orders."""
+    from datetime import datetime, timedelta, timezone
+    from schwab import auth
+    c = auth.client_from_token_file(str(TOKEN_FILE), _env("SCHWAB_APP_KEY"),
+                                    _env("SCHWAB_APP_SECRET"))
+    want = _env("SCHWAB_ACCOUNT")
+    acct = [a for a in c.get_account_numbers().json() if a["accountNumber"].endswith(want)][0]
+    now = datetime.now(timezone.utc)
+    r = c.get_orders_for_account(acct["hashValue"], from_entered_datetime=now - timedelta(days=days),
+                                 to_entered_datetime=now + timedelta(hours=1))
+    r.raise_for_status()
+    out = {}
+    for o in r.json():
+        if o.get("status") != "FILLED":
+            continue
+        legs = [l for a in o.get("orderActivityCollection", []) for l in a.get("executionLegs", [])]
+        qty = sum(l.get("quantity", 0) for l in legs) or o.get("filledQuantity", 0)
+        price = (sum(l["quantity"] * l["price"] for l in legs) / qty) if legs and qty else o.get("price")
+        for leg in o.get("orderLegCollection", []):
+            ins = "BUY" if leg.get("instruction", "").startswith("BUY") else "SELL"
+            out.setdefault((leg["instrument"]["symbol"], ins), []).append(
+                (o.get("enteredTime", ""), qty, round(price, 2) if price else None))
+    for v in out.values():
+        v.sort(reverse=True)
+    return out
 
+
+def _fill_price(fills: dict, symbol: str, side: str, fallback):
+    """The latest matching fill's price - more exact than the average-cost math."""
+    hits = fills.get((symbol, side)) or []
+    return hits[0][2] if hits and hits[0][2] else fallback
+
+
+def sync(go: bool = True, baseline: bool = False, quiet: bool = False) -> list:
+    """Bring holdings in line with Schwab. Buys and adds are recorded with a
+    snapshot, sales and trims are filed in the ticker's history with P/L.
+    Returns the changes."""
+    say = (lambda *a: None) if quiet else print
     theirs, options, label = fetch_positions()
     holdings = load_holdings()
     # "manual": positions held outside this account - the sync leaves them be
@@ -111,30 +142,45 @@ def main():
     mine = {t: tuple(v) for t, v in holdings.get("positions", {}).items() if t not in manual}
     changes = diff(mine, theirs)
 
-    print("  Schwab %s: %d stock/ETF positions%s" % (
+    say("  Schwab %s: %d stock/ETF positions%s" % (
         label, len(theirs), "" if go or baseline else "  (DRY RUN)"))
     for kind, t, n, price in changes:
-        print("    %-5s %-6s %g sh%s" % (kind, t, n, " @ $%.2f" % price if price else ""))
+        say("    %-5s %-6s %g sh%s" % (kind, t, n, " @ $%.2f" % price if price else ""))
     if not changes:
-        print("    no changes")
+        say("    no changes")
     if options:
-        print("  options (not tracked): " + "; ".join(options))
+        say("  options (not tracked): " + "; ".join(options))
 
     if baseline:
         holdings["positions"] = {**{t: [q, a] for t, (q, a) in theirs.items()}, **manual}
     elif go:
-        from record_buy import record
+        from record_buy import record, record_sell
+        fills = recent_fills() if changes else {}
         for kind, t, n, price in changes:
             if kind in ("new", "add"):
-                record(t, n, price, note="taken at sync, not at the buy")
+                record(t, n, _fill_price(fills, t, "BUY", price),
+                       note="taken at sync, not at the buy")
+            else:  # sold or trimmed
+                record_sell(t, n, _fill_price(fills, t, "SELL", None),
+                            note="taken at sync, not at the sale", update_holdings=False)
         holdings = load_holdings()   # record() updated it
         holdings["positions"] = {**{t: [q, a] for t, (q, a) in theirs.items()}, **manual}
     else:
-        return
+        return changes
     holdings["as_of"] = date.today().isoformat()
     holdings["account"] = "Schwab %s (synced)" % label
     HOLDINGS_FILE.write_text(json.dumps(holdings, indent=2), encoding="utf-8")
-    print("  holdings set to Schwab's numbers - %d positions" % len(holdings["positions"]))
+    say("  holdings set to Schwab's numbers - %d positions" % len(holdings["positions"]))
+    return changes
+
+
+def main():
+    args = sys.argv[1:]
+    if "--login" in args:
+        return login()
+    if not TOKEN_FILE.exists():
+        raise SystemExit("  Not logged in yet. Run: python schwab_sync.py --login")
+    sync(go="--go" in args, baseline="--baseline" in args)
 
 
 if __name__ == "__main__":

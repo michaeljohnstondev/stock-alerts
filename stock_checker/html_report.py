@@ -235,6 +235,10 @@ def _what_happened(h: dict) -> str:
             if now and b.get("price"):
                 line += f' || since: {(now / b["price"] - 1) * 100:+.1f}%'
         return line
+    if h.get("sold"):
+        x = h["sold"]
+        pl = f' ({x["pl_pct"]:+.1f}% vs ${x["basis"]:.2f} cost)' if x.get("pl_pct") is not None else ""
+        return f'sold {x["shares"]:g} at ${x["price"]:.2f}{pl}' + (" - whole position" if x.get("all") else "")
     mark = str(h.get("mark", ""))
     return {"s": "skipped - moved up one rung", "radar": "radar - old floor made rung 1",
             "r": "rejected - muted"}.get(mark, mark)
@@ -277,7 +281,8 @@ def _card(t: str, entry: dict, note: dict | None, pos, stale) -> str:
             row = (h.get("snapshot") or {}).get("row")
             if row:
                 # the line at the moment of the buy, then the same line now
-                bits.append('<div class="lbl">At the buy</div>' + _table([_row(row, "buy")], "buy"))
+                when = "At the sale" if h.get("sold") else "At the buy"
+                bits.append(f'<div class="lbl">{when}</div>' + _table([_row(row, "buy")], "buy"))
                 try:
                     cur = now_row(t, row)
                 except Exception:
