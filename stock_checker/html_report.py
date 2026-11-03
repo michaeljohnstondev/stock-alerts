@@ -357,7 +357,7 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
             # your positions: card links too, but not counted in "All"
             counts["owned"] = len(items)
 
-    tabs = [("all", "All"), ("cheaper", "Cheaper"), ("recovering", "On the rise")] + \
+    tabs = [("all", "All"), ("cheaper", "Cheaper"), ("recovering", "Climbing")] + \
            [(f"r{n}", "&#9733;" * n) for n in (5, 4, 3, 2, 1)] + [("sell", "Sells"), ("owned", "Owned")]
     total = sum(v for k, v in counts.items() if not k.startswith("r") and k != "owned")
     tab_html = '<div class="tabs">' + "".join(
