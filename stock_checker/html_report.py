@@ -17,6 +17,7 @@ from .constants import REPORTS_DIR
 from .snapshot import describe, now_row
 
 _PRICES = {}  # ticker -> latest price on the page, for "since the buy"
+_HELD = {}    # ticker -> shares you own, for the Owned column
 
 # Set per run from config.json "chart_site" (see charts.py)
 _chart = lambda t: f"https://www.tradingview.com/chart/?symbol={t}"
@@ -141,7 +142,9 @@ def _first(item: dict) -> list:
     r = item.get("rating")
     stars = f'<span class="new">{"&#9733;" * r}</span>' if r else ""
     auto = "$" if item.get("auto") else ""
-    return [_td(stars, r or 0), _td(_tk(item["ticker"]) + auto, item["ticker"]),
+    qty = _HELD.get(item["ticker"])
+    owned = _td(f'<span class="above">$ {qty:g}</span>', qty) if qty else _td("", 0)
+    return [owned, _td(stars, r or 0), _td(_tk(item["ticker"]) + auto, item["ticker"]),
             _td(f'<a href="{_e(_chart(item["ticker"]))}" target="_blank" rel="noopener">'
                 f'${item["price"]:.2f}</a>', item["price"], "num")]
 
@@ -180,7 +183,8 @@ def _zone_row(item: dict) -> str:
         first = _td(f'<span class="{cls}" title="{tip} {r}">{"&#9733;" * r}</span>', r)
     else:
         first = _td('<span class="tags" title="no rung within 5%">&ndash;</span>', 0)
-    cells = [first] + _first(item)[1:] + [
+    base = _first(item)
+    cells = [base[0], first] + base[2:] + [
         _td(f'{item["was"]} &rarr; {item["zone"]}', item["zone"]),
         _td(f'{item["off_high"]:.0f}%', item["off_high"], "num"),
     ] + _common(item)
@@ -207,7 +211,7 @@ COLS = ["Zone", "AI", "DP", "Earn", "Val", "Details"]
 def _table(rows: list, side: str) -> str:
     mid = {"zone": ["Move", "Off high"],
            "owned": ["Position", "P/L", "Next sell"]}.get(side, ["Target", "Ladder"])
-    head = "".join(f"<th>{h}</th>" for h in ["Rung", "Ticker", "Price"] + mid + COLS)
+    head = "".join(f"<th>{h}</th>" for h in ["Owned", "Rung", "Ticker", "Price"] + mid + COLS)
     return f'<div class="wrap"><table><tr>{head}</tr>{"".join(rows)}</table></div>'
 
 
@@ -333,6 +337,8 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
     for _, _, items in sections:
         for it in items:
             _PRICES[it["ticker"]] = it["price"]
+    _HELD.clear()
+    _HELD.update({tk: v[0] for tk, v in holdings.get("positions", {}).items()})
 
     seen, body, counts = [], [], {}
     by_ticker = {}  # ticker -> [(section title, kind, row)] for its card
