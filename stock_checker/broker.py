@@ -38,3 +38,35 @@ def price(ticker: str):
         return float(reg["lastPrice"]) if reg.get("lastPrice") else None
     except Exception:
         return None
+
+
+BATCH = 100   # tickers per request - ~5 requests for the whole book
+
+
+def regular_prices(tickers: list) -> dict:
+    """{ticker: regular-session last price} for many tickers at once.
+
+    The regular session only: during the day that is the real-time price,
+    after the close it is the official close. After-hours prints are left
+    out on purpose - one thin trade at 6 PM should not hit a rung.
+    Tickers Schwab can't price are simply missing; callers fall back.
+    """
+    out = {}
+    try:
+        c = _get_client()
+        if c is None:
+            return out
+        for i in range(0, len(tickers), BATCH):
+            chunk = tickers[i:i + BATCH]
+            # Schwab writes share classes with a slash: BRK/B
+            names = {t.replace("-", "/"): t for t in chunk}
+            r = c.get_quotes(list(names))
+            if r.status_code != 200:
+                continue
+            for sym, q in r.json().items():
+                p = (q.get("regular") or {}).get("regularMarketLastPrice")                     or (q.get("quote") or {}).get("lastPrice")
+                if p and sym in names:
+                    out[names[sym]] = float(p)
+    except Exception:
+        pass
+    return out

@@ -64,8 +64,11 @@ def load_ratings() -> dict:
     return {}
 
 
-def _fetch_ticker_data(ticker: str, earnings_calendar: dict) -> dict:
-    """Fetch current price, earnings, and fundamentals for a single ticker."""
+def _fetch_ticker_data(ticker: str, earnings_calendar: dict,
+                       live_price: float | None = None) -> dict:
+    """Fetch current price, earnings, and fundamentals for a single ticker.
+    live_price: Schwab's regular-session price, used over the daily bar's
+    close when given (Yahoo's bar runs ~15 minutes behind in the day)."""
     result = {"ticker": ticker, "price": None, "earnings": None, "value": None}
 
     # Current price — use last close (reliable), skip Alpaca (stale after hours).
@@ -74,8 +77,8 @@ def _fetch_ticker_data(ticker: str, earnings_calendar: dict) -> dict:
     price = None
     df = fetch_stock_data(ticker, period="1y")
     if not df.empty:
-        price = float(df["Close"].iloc[-1])
-        result["high_52w"] = float(df["High"].max())
+        price = live_price or float(df["Close"].iloc[-1])
+        result["high_52w"] = max(float(df["High"].max()), price)
         # for spotting a ladder price has fallen through and stayed under
         result["closes"] = [float(c) for c in df["Close"].tail(5)]
         result["atr"] = atr_pct(df) if len(df) > 15 else None
@@ -102,10 +105,12 @@ def build_owned(holdings: dict, ratings: dict) -> list:
     if not positions:
         return []
     calendar = fetch_earnings_calendar()
+    from .broker import regular_prices
+    live = regular_prices(list(positions))
     dark_pool, _ = score_dark_pool(list(positions))
     with ThreadPoolExecutor(max_workers=8) as pool:
         data = dict(zip(positions, pool.map(
-            lambda t: _fetch_ticker_data(t, calendar), positions)))
+            lambda t: _fetch_ticker_data(t, calendar, live.get(t)), positions)))
     out = []
     for t, (qty, basis) in positions.items():
         td = data.get(t) or {}
@@ -277,9 +282,12 @@ def run_report() -> tuple:
 
     # Fetch prices + earnings + fundamentals in parallel
     ticker_data = {}
+    from .broker import regular_prices
+    live = regular_prices(rated_tickers)
+    print(f"  Prices: Schwab live for {len(live)}, Yahoo daily bar for {len(rated_tickers) - len(live)}")
     with ThreadPoolExecutor(max_workers=8) as pool:
         futures = {
-            pool.submit(_fetch_ticker_data, t, earnings_calendar): t
+            pool.submit(_fetch_ticker_data, t, earnings_calendar, live.get(t)): t
             for t in rated_tickers
         }
         done = 0
