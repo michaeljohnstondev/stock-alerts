@@ -28,6 +28,8 @@ from .mutes import load_mutes, is_muted
 from .group_snooze import load_snoozes, snoozed_group
 from .ladder_roll import atr_pct, is_dead, ladder_number
 from .holdings import load_holdings
+from .notes import load_notes, is_stale
+from .html_report import write_html_report
 from .alert_state import (load_state, save_state, mark_escalations,
                           record, ALERT_STATE_FILE)
 
@@ -124,6 +126,25 @@ def _zone_entries(zones_now: dict, state: dict, seed: bool) -> list:
         marks[ticker] = zone if mark is None else max(mark, zone)
     state["zones"] = {t: z for t, z in marks.items() if t in zones_now}
     out.sort(key=lambda x: (-x["zone"], -x["off_high"]))
+    return out
+
+
+def _zone_climbs(zones_now: dict, state: dict, seed: bool) -> list:
+    """Stocks that climbed back up a zone since the last run - recovering.
+
+    Measured against the last run's zone, not the deepest mark, so a climb
+    shows the day it happens. The mirror of _zone_entries.
+    """
+    last = state.get("zone_last")
+    first = seed or last is None
+    last = last or {}
+    out = []
+    for ticker, (zone, item) in zones_now.items():
+        was = last.get(ticker)
+        if not first and was is not None and zone < was:
+            out.append({**item, "was": was})
+    state["zone_last"] = {t: z for t, (z, _) in zones_now.items()}
+    out.sort(key=lambda x: (-x["was"], -x["off_high"]))
     return out
 
 
@@ -371,6 +392,7 @@ def run_report() -> tuple:
     state["ladders"] = {t: ladder_number(d) for t, d in ratings.items()
                         if ladder_number(d) > 1}
     zone_entries = _zone_entries(zones_now, state, seed)
+    zone_climbs = _zone_climbs(zones_now, state, seed)
     record(buy_alerts, state, "buy")
     record(sell_alerts, state, "sell")
     record(buy_near, state, "buy_near")
@@ -389,6 +411,11 @@ def run_report() -> tuple:
     # Generate report - twice. The short one is what you read; the full one
     # lists every triggered and approaching name, so a report you skimmed
     # or skipped never costs you a ticker. Same data, same timestamp.
+    # AI grade from your research notes, on every line that has one
+    notes = load_notes()
+    for item in buy_alerts + buy_near + sell_alerts + sell_near + zone_entries + zone_climbs:
+        item["ai"] = (notes.get(item["ticker"]) or {}).get("ai")
+
     report_args = dict(
         buy_alerts=buy_alerts,
         buy_near=buy_near,
@@ -402,11 +429,30 @@ def run_report() -> tuple:
         snoozes=snoozes,
         hidden=hidden,
         zone_entries=zone_entries,
+        zone_climbs=zone_climbs,
         dead=dead,
         holdings=holdings,
     )
     path, text = write_ratings_report(**report_args)
     full_path, _ = write_ratings_report(**report_args, only_new=False)
+
+    # The clickable page: same header, every name, a card per ticker
+    header = []
+    for line in text.splitlines()[3:]:
+        if "╔" in line:
+            break
+        if line.strip() and "====" not in line:
+            header.append(line.strip())
+    stamp = path.stem.replace("ratings_", "")
+    html_path = write_html_report(
+        header,
+        [("Entered a deeper zone - getting cheaper", "zone", zone_entries),
+         ("Climbed out of a zone - recovering", "zone", zone_climbs),
+         ("Buys - triggered", "buy", buy_alerts),
+         ("Buys - approaching", "buy", buy_near),
+         ("Sells - triggered", "sell", sell_alerts),
+         ("Sells - approaching", "sell", sell_near)],
+        ratings, notes, holdings, _tags, is_stale, stamp)
 
     # Also write sector report
     write_sector_report(sector_rotation, sector_changes,
@@ -414,6 +460,7 @@ def run_report() -> tuple:
 
     print(f"\n  Report saved: {path}")
     print(f"  Full report:  {full_path}  (every name, * = new)")
+    print(f"  Clickable:    {html_path}  (also reports/latest.html)")
     print(f"  API calls: {get_api_call_count()}")
 
     # Persist the run. Additive and fail-soft: the JSON state files above
@@ -494,20 +541,8 @@ def _fmt_item(item: dict, side: str) -> str:
         else:
             status = f"{pct:.1f}% below ${target:.2f}"
 
-    earn = _earn_tag(item.get("earnings", {}))
-    val = _val_tag(item.get("value", {}))
-
-    tags = []
-    if item.get("zone") is not None:
-        tags.append(f"Zone {item['zone']}")
-    if earn:
-        tags.append(earn)
-    dp = _dp_tag(item.get("dp"))
-    if dp:
-        tags.append(dp)
-    if val:
-        tags.append(val)
-    tag_str = f"  [{' | '.join(tags)}]" if tags else ""
+    tags = _tags(item)
+    tag_str = f"  [{tags}]" if tags else ""
 
     # L2 = second ladder, the first one broken through. Z = the rung's zone.
     where = ""
@@ -521,14 +556,27 @@ def _fmt_item(item: dict, side: str) -> str:
     return f"   {ticker:7s}  ${price:<9.2f}  {status:30s}  {stars:{max(5, rungs)}s} ({rating}/{rungs}){where:7s}{tag_str}"
 
 
+def _tags(item: dict, zone: bool = True) -> str:
+    """Zone | AI | EARN | DP | Val - the bracketed tail of a line."""
+    tags = []
+    if zone and item.get("zone") is not None:
+        tags.append(f"Zone {item['zone']}")
+    if item.get("ai"):
+        tags.append(f"AI {item['ai']}")
+    for t in (_earn_tag(item.get("earnings", {})), _dp_tag(item.get("dp")),
+              _val_tag(item.get("value", {}))):
+        if t:
+            tags.append(t)
+    return " | ".join(tags)
+
+
 def _fmt_zone_entry(item: dict) -> str:
-    tags = [t for t in (_earn_tag(item.get("earnings", {})), _dp_tag(item.get("dp")),
-                        _val_tag(item.get("value", {}))) if t]
+    tags = _tags(item, zone=False)
     if item.get("ladder", 1) > 1:
-        tags.insert(0, f"L{item['ladder']}")
+        tags = f"L{item['ladder']} | {tags}"
     ticker = item["ticker"] + ("$" if item.get("auto") else "")
     status = f"ZONE {item['was']} -> {item['zone']}  ({item['off_high']:.0f}% off high)"
-    return f"   *{ticker:7s} ${item['price']:<9.2f}  {status:30s}  [{' | '.join(tags)}]"
+    return f"   *{ticker:7s} ${item['price']:<9.2f}  {status:30s}" + (f"  [{tags}]" if tags else "")
 
 
 def _escalated_only(items: list) -> list:
@@ -545,7 +593,7 @@ def write_ratings_report(buy_alerts, buy_near,
                           sector_rotation, sector_changes,
                           market_trends, market_context,
                           dp_as_of=None, snoozes=None, hidden=None,
-                          zone_entries=None, dead=None, holdings=None,
+                          zone_entries=None, zone_climbs=None, dead=None, holdings=None,
                           only_new=True) -> tuple:
     """Write the ratings report.
 
@@ -621,9 +669,17 @@ def write_ratings_report(buy_alerts, buy_near,
     # Zone entries are news by construction - the same in both reports.
     # Zone 5 sorts first: that is the step-in-and-analyze list.
     if zone_entries:
-        L.append(f"  >>> ENTERED A DEEPER ZONE — {len(zone_entries)} <<<")
+        L.append(f"  >>> ENTERED A DEEPER ZONE (getting cheaper) — {len(zone_entries)} <<<")
         L.append("")
         for item in zone_entries:
+            L.append(_fmt_zone_entry(item))
+        L.append("")
+
+    # The other direction: back up a zone since the last run
+    if zone_climbs:
+        L.append(f"  >>> CLIMBED OUT OF A ZONE (recovering) — {len(zone_climbs)} <<<")
+        L.append("")
+        for item in zone_climbs:
             L.append(_fmt_zone_entry(item))
         L.append("")
 

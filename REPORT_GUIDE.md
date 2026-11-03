@@ -43,6 +43,9 @@ means and how he uses it. Read all of this before commenting on a report.
      with no rungs left, so it keeps watching all the way down. A stock
      has to climb two zones back up before a drop into the same zone
      counts again.
+   - `CLIMBED OUT OF A ZONE`: the other direction, stocks that moved back
+     up a zone since the last run, recovering. Deepest climbs first. A
+     name climbing out of zone 4 or 5 may be leaving its cheapest stretch.
    - `WATCH CLOSING IN`: a 5-star watch price is close. The most actionable
      section when it appears.
    - `TRIGGERED`: price is at or below a buy rung.
@@ -62,6 +65,21 @@ stock that isn't in the short one, or when he hasn't looked in a while.
 
 Within each section, lines are sorted by rung (deepest first), then by
 distance from the target.
+
+## Research notes and the clickable page
+
+When he asks about a stock, answer briefly in three parts: **what they
+do**, an **AI grade** (A = direct tailwind, B = mostly helps, C = neutral,
+D = real threat but adapting, F = likely breaks the model, with one line
+why), and a **long-term outlook**. Save it with
+`stock_checker.notes.save_note(ticker, what=..., ai=..., ai_why=...,
+outlook=...)` so the report shows the grade from then on. Notes older
+than 90 days are marked stale.
+
+Each run also writes `ratings_<time>.html` and `reports/latest.html`.
+Every ticker links to a card with the note, the ladder (filled rungs
+struck through), when it last changed, review history, his position and
+a chart link.
 
 ## Rolled ladders
 
@@ -116,6 +134,7 @@ If he asks you to review snoozes:
 | `L2` | Second ladder: the first was broken through and rolled. Not shown on L1. |
 | `Z3` | The zone the **rung** sits in. `Zone 2` in the brackets is where the **stock** is now. |
 | `Zone 2` | How far below its 52-week high, explained below. |
+| `AI B+` | His AI impact grade from `state/notes.json`: will AI help (A) or break (F) this business? Only on names he has researched. |
 | `EARN +2d` / `EARN -1d` | Earnings in 2 days / reported 1 day ago. |
 | `DP 1 (-)` | Dark pool score, explained below. `(+)` / `(-)` / `(0)` = higher / lower / unchanged vs the previous trading day. |
 | `Val:B(61)` | Fundamentals grade, A+ to D, with a 0–100 score, followed by the detail behind it. |
