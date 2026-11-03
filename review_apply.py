@@ -133,6 +133,33 @@ def apply(ticker: str, entry: dict, mark: tuple, cur: float | None,
     return entry, new
 
 
+def set_first_rung(ticker: str, entry: dict, price: float) -> list:
+    """A new rung 1 from you re-shapes the ladder under it: rungs above it go,
+    rungs still below it (a real step down) stay in order, and the rest are
+    built from chart structure below. A watch price above the new rung 1 is
+    dropped - it would alert before your starter level."""
+    old = sorted([b for b in entry.get("buys", []) if b["rating"] != 5 and not b.get("filled")],
+                 key=lambda b: -b["price"])
+    watch = [b for b in entry.get("buys", []) if b["rating"] == 5 and b["price"] < price]
+    filled = [b for b in entry.get("buys", []) if b.get("filled")]
+    r = ladder_for(ticker)
+    step = r.get("step", 0.03) if not r.get("error") else 0.03
+    keep, last = [], price
+    for b in old:
+        if b["price"] <= last * (1 - step) and len(keep) < RUNGS - 1:
+            keep.append(b["price"])
+            last = b["price"]
+    new = [{"price": price, "rating": 1}] +           [{"price": x, "rating": i + 2} for i, x in enumerate(keep)]
+    new += rungs_below(ticker, last, RUNGS - len(new), len(new) + 1)
+    entry.setdefault("reviews", []).append({
+        "date": date.today().isoformat(), "mark": f"hand: rung 1 -> ${price:g}",
+        "buys": entry.get("buys", [])})
+    entry["buys"] = filled + new + watch
+    entry["updated"] = date.today().isoformat()
+    entry.pop("source", None)
+    return new
+
+
 def note_of(mark: tuple) -> str:
     return " ".join("%g" % m if isinstance(m, float) else m for m in mark if m is not None)
 
