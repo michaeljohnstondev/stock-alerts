@@ -566,5 +566,6 @@
     "size": 25000,
     "risk_per_trade": 0.01
   },
-  "check_interval_minutes": 60
+  "check_interval_minutes": 60,
+  "chart_site": "tradingview"
 }

@@ -94,6 +94,42 @@ def _fetch_ticker_data(ticker: str, earnings_calendar: dict) -> dict:
     return result
 
 
+def build_owned(holdings: dict, ratings: dict) -> list:
+    """One row per position: price, P/L, next sell rung, and the same zone /
+    DP / earnings / value scores the report uses. Fetches its own prices, so
+    the page can be re-rendered without a full scan."""
+    positions = holdings.get("positions", {})
+    if not positions:
+        return []
+    calendar = fetch_earnings_calendar()
+    dark_pool, _ = score_dark_pool(list(positions))
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        data = dict(zip(positions, pool.map(
+            lambda t: _fetch_ticker_data(t, calendar), positions)))
+    out = []
+    for t, (qty, basis) in positions.items():
+        td = data.get(t) or {}
+        price = td.get("price")
+        if not price:
+            continue
+        entry = ratings.get(t, {})
+        above = sorted(x["price"] for x in entry.get("sells", []) if x["price"] > price)
+        filled = [b["rating"] for b in entry.get("buys", []) if b.get("filled")]
+        out.append({
+            "ticker": t, "price": price, "qty": qty, "basis": basis,
+            "pl": (price / basis - 1) * 100 if basis else 0,
+            "value_usd": qty * price,
+            "next_sell": above[0] if above else None,
+            # how deep you went: the deepest rung you filled
+            "rating": max(filled) if filled else None,
+            "zone": _zone(price, td.get("high_52w")),
+            "dp": dark_pool.get(t), "earnings": td.get("earnings"),
+            "value": td.get("value"),
+        })
+    out.sort(key=lambda x: x["pl"])
+    return out
+
+
 def _zone(price, high) -> int | None:
     if not price or not high or high <= 0:
         return None
@@ -446,13 +482,14 @@ def run_report() -> tuple:
     stamp = path.stem.replace("ratings_", "")
     html_path = write_html_report(
         header,
-        [("Entered a deeper zone - getting cheaper", "zone", zone_entries),
-         ("Climbed out of a zone - recovering", "zone", zone_climbs),
+        [("Entered a deeper zone - getting cheaper", "cheaper", zone_entries),
+         ("Climbed out of a zone - recovering", "recovering", zone_climbs),
          ("Buys - triggered", "buy", buy_alerts),
          ("Buys - approaching", "buy", buy_near),
          ("Sells - triggered", "sell", sell_alerts),
-         ("Sells - approaching", "sell", sell_near)],
-        ratings, notes, holdings, _tags, is_stale, stamp)
+         ("Sells - approaching", "sell", sell_near),
+         ("Owned", "owned", build_owned(holdings, ratings))],
+        ratings, notes, holdings, is_stale, stamp)
 
     # Also write sector report
     write_sector_report(sector_rotation, sector_changes,

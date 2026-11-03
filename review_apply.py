@@ -93,7 +93,9 @@ def rungs_below(ticker: str, anchor: float, count: int, start: int) -> list:
     return out
 
 
-def apply(ticker: str, entry: dict, mark: tuple, cur: float | None) -> tuple:
+def apply(ticker: str, entry: dict, mark: tuple, cur: float | None,
+          rung: int | None = None) -> tuple:
+    """rung overrides the size-based rung for a buy (your call wins)."""
     buys = entry.get("buys", [])
     watch = [b for b in buys if b["rating"] == 5]
     old = sorted([b for b in buys if b["rating"] != 5], key=lambda b: b["rating"])
@@ -105,7 +107,7 @@ def apply(ticker: str, entry: dict, mark: tuple, cur: float | None) -> tuple:
         _, dollars, shares, total = mark
         price = dollars / shares
         # an add caps by the whole position's shares - about total / price
-        n = rung_for(dollars, round(total / price) if total else shares, total)
+        n = rung or rung_for(dollars, round(total / price) if total else shares, total)
         # rungs above the one you reached: the deepest old rungs still
         # above your price, so the ladder reads as the path you took
         above = [b["price"] for b in old if b["price"] > price][-(n - 1):] if n > 1 else []
