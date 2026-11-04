@@ -11,16 +11,40 @@ Usage:
     python record_buy.py SCCO 2                  # 2 shares at the live price
     python record_buy.py SCCO 2 --price 173.25   # your actual fill
     python record_buy.py SCCO 2 --rung 1         # override the rung sizing
+    python record_buy.py --intend DOCN 1         # an open order: when its fill is
+                                                 # recorded (sync or trade.py), use rung 1
 """
 
 import json
 import sys
 from datetime import date
 
-from stock_checker.constants import USER_RATINGS_FILE
+from stock_checker.constants import STATE_DIR, USER_RATINGS_FILE
 from stock_checker.holdings import HOLDINGS_FILE, load_holdings
 from stock_checker.snapshot import take, describe
 from review_apply import apply
+
+# rung the user picked for an order that has not filled yet - used once, by the
+# record() that books the fill, instead of sizing by dollars
+INTENTS_FILE = STATE_DIR / "rung_intents.json"
+
+
+def _intents() -> dict:
+    return json.loads(INTENTS_FILE.read_text(encoding="utf-8")) if INTENTS_FILE.exists() else {}
+
+
+def set_intent(ticker: str, rung: int):
+    d = _intents()
+    d[ticker.upper()] = int(rung)
+    INTENTS_FILE.write_text(json.dumps(d, indent=2), encoding="utf-8")
+
+
+def _pop_intent(ticker: str) -> int | None:
+    d = _intents()
+    rung = d.pop(ticker, None)
+    if rung is not None:
+        INTENTS_FILE.write_text(json.dumps(d, indent=2), encoding="utf-8")
+    return rung
 
 
 def _opt(args: list, flag: str):
@@ -37,6 +61,8 @@ def record(ticker: str, shares: float, price: float | None = None,
     """Snapshot, fill the rung, update holdings, sell ladder for a new name.
     note is saved on the snapshot (e.g. "taken at sync, not at the buy")."""
     ticker = ticker.upper()
+    if rung is None:
+        rung = _pop_intent(ticker)
     ratings = json.loads(USER_RATINGS_FILE.read_text(encoding="utf-8"))
     entry = ratings.setdefault(ticker, {"buys": []})
     snap = take(ticker, entry)
@@ -115,6 +141,11 @@ def record_sell(ticker: str, shares: float, price: float | None = None,
 
 def main():
     args = list(sys.argv[1:])
+    intend = _opt(args, "--intend")
+    if intend:
+        set_intent(intend, int(args[0]))
+        print(f"  {intend.upper()} - its next recorded fill will be rung {args[0]}")
+        return
     price = _opt(args, "--price")
     rung = _opt(args, "--rung")
     if len(args) != 2:
