@@ -30,8 +30,11 @@ means and how he uses it. Read all of this before commenting on a report.
    encourage ending the snooze early. Sell alerts for it still show.
    A `Held:` line gives how many stocks he owns and the date of that list.
    Held stocks show **sells only**: no buy rungs, no zone entries. Once he
-   owns it he doesn't use the buy side. If the date is old, a stock he sold
-   may still be hidden, so suggest he send fresh positions.
+   owns it he doesn't use the buy side. The one exception is a watch price
+   (5-star) - a level he chose to add at, so it still alerts. If the date is
+   old, a stock he sold may still be hidden, so suggest he send fresh
+   positions. When he sells out completely, rung 1 resets to his old entry
+   (average cost) so a pullback to where he bought shows up as a buy again.
    A `Broken:` line counts ladders that price has fallen through and
    stayed under (last 3 closes more than one ATR below the deepest rung).
    Auto ones are ready for `python roll_ladders.py`; hand-set ones need

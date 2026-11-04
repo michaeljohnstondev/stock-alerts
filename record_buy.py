@@ -22,7 +22,7 @@ from datetime import date
 from stock_checker.constants import STATE_DIR, USER_RATINGS_FILE
 from stock_checker.holdings import HOLDINGS_FILE, load_holdings
 from stock_checker.snapshot import take, describe
-from review_apply import apply
+from review_apply import apply, set_first_rung
 
 # rung the user picked for an order that has not filled yet - used once, by the
 # record() that books the fill, instead of sizing by dollars
@@ -119,12 +119,20 @@ def record_sell(ticker: str, shares: float, price: float | None = None,
     positions = holdings.setdefault("positions", {})
     qty, basis = positions.get(ticker, (0, 0))
     pl = (price / basis - 1) * 100 if basis else None
+    sold_all = shares >= qty
     entry.setdefault("reviews", []).append({
         "date": date.today().isoformat(), "mark": "sold",
         "sold": {"shares": shares, "price": round(price, 2), "basis": basis,
                  "pl_pct": round(pl, 1) if pl is not None else None,
-                 "all": shares >= qty},
+                 "all": sold_all},
         "snapshot": snap})
+    if sold_all and basis:
+        # out of it: rung 1 goes back to your old entry, so a pullback to where
+        # you bought shows up as a buy again (watch prices below it are kept).
+        # Filled marks belonged to the position you just closed - clear them.
+        entry["buys"] = [b for b in entry.get("buys", []) if not b.get("filled")]
+        set_first_rung(ticker, entry, round(basis, 2))
+        print("  %-6s re-entry  rung 1 at your old entry $%.2f" % (ticker, basis))
     USER_RATINGS_FILE.write_text(json.dumps(ratings, indent=2), encoding="utf-8")
     print("  %-6s sold      %g @ $%.2f%s" % (ticker, shares, price,
                                              "  (%+.1f%% vs cost)" % pl if pl is not None else ""))

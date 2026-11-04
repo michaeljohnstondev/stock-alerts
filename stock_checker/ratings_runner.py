@@ -364,8 +364,10 @@ def run_report() -> tuple:
                                           td.get("atr")):
             dead["auto" if data.get("source") == "auto" else "hand"] += 1
 
-        # Process buys
-        for entry in ([] if ticker in held else data.get("buys", [])):
+        # Process buys - for a name you hold, only its watch price (5-star):
+        # that one is a level you chose to add at, so it still alerts
+        buys = data.get("buys", [])
+        for entry in ([b for b in buys if b["rating"] == 5] if ticker in held else buys):
             if entry.get("filled"):
                 continue  # you already bought here - the next rung is the news
             info = _classify_entry(price, entry, "buy")
@@ -714,7 +716,7 @@ def write_ratings_report(buy_alerts, buy_near,
         # the date is the point: sell something and forget to say so, and it
         # stays off the buy side until this list is refreshed
         L.append(f"    Held:     {len(holdings['positions'])} positions as of"
-                 f" {holdings.get('as_of', '?')} - buys hidden, sells only")
+                 f" {holdings.get('as_of', '?')} - buys hidden except watch prices, sells shown")
     if dead and (dead["auto"] or dead["hand"]):
         L.append(f"    Broken:   {dead['auto']} auto ladders through their floor"
                  f" (python roll_ladders.py), {dead['hand']} hand-set to review")
