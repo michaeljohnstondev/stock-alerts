@@ -128,6 +128,14 @@ def apply(ticker: str, entry: dict, mark: tuple, cur: float | None,
         # rungs above it filled, keep the rest of your ladder as it is.
         mine = [b for b in old if entry.get("source") != "auto" and not b.get("filled")
                 and abs(b["price"] / price - 1) <= 0.01]
+        # A buy above a hand-set ladder (you went in before rung 1): log it,
+        # leave your rungs exactly as you set them.
+        if entry.get("source") != "auto" and old and                 all(price > b["price"] * 1.01 for b in old if not b.get("filled")):
+            note["bought"] = {"dollars": dollars, "price": round(price, 2), "rung": 0,
+                              "above_ladder": True}
+            entry.setdefault("reviews", []).append(note)
+            entry["buys"] = sorted(old + watch, key=lambda b: b["rating"])
+            return entry, old
         if mine:
             hit = mine[0]["rating"]
             today_ = date.today().isoformat()

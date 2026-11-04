@@ -11,8 +11,9 @@
          --session ext   pre-market + regular + after-hours (Schwab "seamless")
          --session pm    after-hours only (about 4-8 PM ET)
          --session am    pre-market only (about 7-9:30 AM ET)
-       Add --gtc to keep it open until filled or cancelled (good-till-cancel)
-       instead of expiring at the end of the day.
+       Orders are good-till-cancel with extended hours by default (your call:
+       always GTC). Add --day for a day order, --session normal for regular
+       hours only.
 
     python trade.py orders              # today's orders on the account
     python trade.py cancel <order id>   # cancel a working order
@@ -258,10 +259,11 @@ def cancel(order_id: str):
 
 def main():
     a = sys.argv[1:]
-    session = "normal"
-    gtc = "--gtc" in a
-    if gtc:
-        a.remove("--gtc")
+    session = "ext"           # default: pre-market + regular + after-hours
+    gtc = "--day" not in a    # default: good-till-cancel
+    for flag in ("--day", "--gtc"):
+        if flag in a:
+            a.remove(flag)
     if "--session" in a:
         i = a.index("--session")
         session = a[i + 1].lower()

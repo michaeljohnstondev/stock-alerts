@@ -280,7 +280,7 @@ def _what_happened(h: dict) -> str:
     """A review note in words: "b 147.6 3" -> "bought $148 at $49.20 - rung 1"."""
     if h.get("bought"):
         b = h["bought"]
-        line = f'bought ${b["dollars"]:,.0f} at ${b["price"]:.2f} - rung {b["rung"]}'
+        line = f'bought ${b["dollars"]:,.0f} at ${b["price"]:.2f} - ' +             ("above your ladder" if b.get("above_ladder") else f'rung {b["rung"]}')
         if h.get("snapshot"):
             line += f' - snapshot at {h["snapshot"]["at"][11:]} below'
             now = _PRICES.get(h.get("ticker", ""))
@@ -418,7 +418,7 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
     tab_html = '<div class="tabs">' + "".join(
         f'<button data-f="{f}"{" class=on" if f == "all" else ""}>{label}'
         f'<span class="n">{total if f == "all" else counts.get(f, 0)}</span></button>'
-        for f, label in tabs if f == "all" or counts.get(f)) + "</div>"
+        for f, label in tabs) + "</div>"  # always shown, 0 when empty
 
     positions = holdings.get("positions", {})
     # one page per ticker in reports/cards/, rewritten every run
