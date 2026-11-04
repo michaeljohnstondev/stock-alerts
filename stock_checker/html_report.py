@@ -60,8 +60,8 @@ def _arrange(first: list, mid: list, common: list, ticker: str) -> list:
     DP, Earn, Val, vs Sector, Details. first = [owned, rung, ticker, price],
     common = [zone, ai, dp, earn, val, details]."""
     owned, rung, tick, price = first
-    zone, ai, dp, earn, val, details = common
-    return [owned, tick, price] + mid + [zone, ai, rung, dp, earn, val,
+    zone, ai, o1, o5, o20, dp, earn, val, details = common
+    return [owned, tick, price] + mid + [zone, ai, o1, o5, o20, rung, dp, earn, val,
                                          _sector_cell(ticker), details]
 
 # Set per run from config.json "chart_site" (see charts.py)
@@ -175,11 +175,19 @@ def _common(item: dict) -> list:
                         for d in [val.get("details", {}).get(k, "")] if d and d != "no data")
     return [_td("" if zone is None else zone, "" if zone is None else zone, "num"),
             _td(_e(ai), _grade_v(ai), ai_cls),
+            _grade_td(item.get("o1")), _grade_td(item.get("o5")), _grade_td(item.get("o20")),
             _td(_e(dp_txt), sc or "", dp_cls),
             _td(_e(earn_txt.strip()), du if du is not None else 999, earn_cls),
             _td(_e(val_txt), val.get("score", "") if grade else "",
                 "g-a" if grade[:1] in ("A", "B") else "g-d" if grade[:1] in ("D", "F") else ""),
             f'<td class="tags">{_e(detail)}</td>']
+
+
+def _grade_td(g) -> str:
+    """An A-F grade cell, colored like AI: A-B green, C plain, D-F red."""
+    g = g or ""
+    cls = "g-a" if g[:1] in ("A", "B") else "g-d" if g and g[:1] in "DF" else ""
+    return _td(_e(g), _grade_v(g), cls)
 
 
 def _first(item: dict) -> list:
@@ -257,7 +265,7 @@ COLS = ["Zone", "AI", "DP", "Earn", "Val", "Details"]
 def _table(rows: list, side: str) -> str:
     mid = {"zone": ["Move", "Off high"],
            "owned": ["Position", "P/L", "Next sell"]}.get(side, ["Target", "Ladder"])
-    cols = ["Owned", "Ticker", "Price"] + mid + ["Zone", "AI", "Rung", "DP", "Earn", "Val",
+    cols = ["Owned", "Ticker", "Price"] + mid + ["Zone", "AI", "O-1", "O-5", "O-20", "Rung", "DP", "Earn", "Val",
                                                     "vs Sector", "Details"]
     head = "".join(f"<th>{h}</th>" for h in cols)
     return f'<div class="wrap"><table><tr>{head}</tr>{"".join(rows)}</table></div>'
@@ -308,6 +316,9 @@ def _card(t: str, entry: dict, note: dict | None, pos, stale) -> str:
             bits.append(f'<p>{_e(note["what"])}</p>')
         if note.get("ai"):
             bits.append(f'<p><b>AI {_e(note["ai"])}</b> - {_e(note.get("ai_why", ""))}</p>')
+        for key, label in (("o1", "O-1 - a year out"), ("o5", "O-5 - five years out"), ("o20", "O-20 - twenty years out")):
+            if note.get(key):
+                bits.append(f'<p><b>{label}: {_e(note[key])}</b> - {_e(note.get(key + "_why", ""))}</p>')
         if note.get("outlook"):
             bits.append(f'<p><b>Outlook:</b> {_e(note["outlook"])}</p>')
     else:
@@ -366,7 +377,8 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
     # shows on the next re-render
     for _, _, items in sections:
         for it in items:
-            it["ai"] = (notes.get(it["ticker"]) or {}).get("ai")
+            n = notes.get(it["ticker"]) or {}
+            it["ai"], it["o1"], it["o5"], it["o20"] = n.get("ai"), n.get("o1"), n.get("o5"), n.get("o20")
 
     # each ticker's rung, for the zone rows: deepest hit, else nearest approaching
     hit, near = {}, {}
