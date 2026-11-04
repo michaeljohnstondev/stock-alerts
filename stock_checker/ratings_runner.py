@@ -325,9 +325,10 @@ def run_report() -> tuple:
     hidden = {}  # snoozed group -> tickers kept off the buy side
     zones_now = {}  # ticker -> (zone, item for the zone-entry line)
     # Once you own it, only the sell side matters - buys and zone entries for
-    # held names are left out. A name dropped from holdings comes back.
+    # held names are left out. A name dropped from holdings comes back. Sells
+    # are the reverse: only for names you still hold (manual ones included).
     holdings = load_holdings()
-    held = set(holdings.get("positions", {}))
+    held = set(holdings.get("positions", {})) | set(holdings.get("manual", {}))
     dead = {"auto": 0, "hand": 0}  # ladders ready for roll_ladders.py
 
     # Build buy and sell lists (triggered + within 5% only)
@@ -402,8 +403,8 @@ def run_report() -> tuple:
                 if not (HIDE_ONE_STAR_APPROACHING and info["rating"] == 1):
                     buy_near.append(item)
 
-        # Process sells
-        for entry in data.get("sells", []):
+        # Process sells - nothing to sell once the position is gone
+        for entry in (data.get("sells", []) if ticker in held else []):
             info = _classify_entry(price, entry, "sell")
             all_evals.append((ticker, "sell", info, price))
             item = {

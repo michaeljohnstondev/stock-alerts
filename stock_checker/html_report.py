@@ -252,7 +252,7 @@ def _zone_row(item: dict) -> str:
     base = _first(item)
     cells = _arrange([base[0], first, base[2], base[3]], [
         _td(f'{item["was"]} &rarr; {item["zone"]}', item["zone"]),
-        _td(f'{item["off_high"]:.0f}%', item["off_high"], "num"),
+        _td(f'{item["off_high"]:.1f}%', item["off_high"], "num"),  # .1f: zone lines sit on 10/25/40%
     ], _common(item), item["ticker"])
     return "<tr>" + "".join(cells) + "</tr>"
 
