@@ -102,19 +102,31 @@ details:target{outline:2px solid var(--acc)}
 border-radius:999px;padding:5px 12px;cursor:pointer}
 .tabs button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
 .tabs .n{opacity:.7;margin-left:4px}
+.tabs .tog{margin-left:auto} .tabs .tog.on{background:var(--warn);border-color:var(--warn);color:#fff}
 """
 
 JS = """
 function openHash(){var id=location.hash.slice(1);if(!id)return;var d=document.getElementById(id);
 if(d&&d.tagName==='DETAILS'){d.open=true;d.scrollIntoView({block:'start'});}}
 window.addEventListener('hashchange',openHash);window.addEventListener('load',openHash);
-function showTab(btn){var f=btn.dataset.f;
-[].forEach.call(document.querySelectorAll('.tabs button'),function(b){b.classList.toggle('on',b===btn)});
-[].forEach.call(document.querySelectorAll('section'),function(s){var k=s.dataset.kind,vis=0;
-[].forEach.call(s.querySelectorAll('tr[data-k]'),function(r){
-var ok=(f==='all'&&k!=='owned')||f===k||(f.charAt(0)==='r'&&k==='buy'&&r.dataset.r===f.slice(1));
-r.style.display=ok?'':'none';if(ok)vis++;});s.style.display=vis?'':'none';});}
-document.addEventListener('click',function(e){var b=e.target.closest('.tabs button');if(b)showTab(b);});
+// "New only" hides lines that are the same as last scan (the short report's filter)
+var NEW=false;try{NEW=localStorage.getItem('newOnly')==='1'}catch(e){}
+function match(f,k,r){return (f==='all'&&k!=='owned')||f===k||(f.charAt(0)==='r'&&k==='buy'&&r.dataset.r===f.slice(1));}
+function keep(k,r){return !NEW||k==='owned'||r.dataset.n==='1';}
+function eachRow(fn){[].forEach.call(document.querySelectorAll('section'),function(s){var k=s.dataset.kind;
+[].forEach.call(s.querySelectorAll('tr[data-k]'),function(r){fn(s,k,r)});});}
+function render(){var on=document.querySelector('.tabs button.on[data-f]'),f=on?on.dataset.f:'all';
+[].forEach.call(document.querySelectorAll('.tabs button[data-f]'),function(b){var c=0,g=b.dataset.f;
+eachRow(function(s,k,r){if(match(g,k,r)&&keep(k,r))c++;});b.querySelector('.n').textContent=c;});
+eachRow(function(s,k,r){r.style.display=match(f,k,r)&&keep(k,r)?'':'none';});
+[].forEach.call(document.querySelectorAll('section'),function(s){
+var n=0;[].forEach.call(s.querySelectorAll('tr[data-k]'),function(r){if(r.style.display!=='none')n++;});
+s.style.display=n?'':'none';});
+document.getElementById('newonly').classList.toggle('on',NEW);}
+function showTab(btn){[].forEach.call(document.querySelectorAll('.tabs button[data-f]'),function(b){b.classList.toggle('on',b===btn)});render();}
+document.addEventListener('click',function(e){var b=e.target.closest('.tabs button[data-f]');if(b)showTab(b);
+if(e.target.closest('#newonly')){NEW=!NEW;try{localStorage.setItem('newOnly',NEW?'1':'0')}catch(x){}render();}});
+window.addEventListener('load',render);
 document.addEventListener('click',function(e){var th=e.target.closest('th');if(!th)return;
 var table=th.closest('table'),idx=[].indexOf.call(th.parentNode.children,th);
 var dir=th.classList.contains('asc')?-1:1;
@@ -413,7 +425,9 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
             zone = kind in ("cheaper", "recovering")
             row = (_zone_row(it) if zone else _owned_row(it) if kind == "owned"
                    else _row(it, kind))
-            rows.append(row.replace("<tr", f'<tr data-k="{kind}"', 1))
+            # zone moves are news by definition; ladder lines only when flagged
+            n = ' data-n="1"' if zone or it.get("escalated") else ""
+            rows.append(row.replace("<tr", f'<tr data-k="{kind}"{n}', 1))
             by_ticker.setdefault(it["ticker"], []).append((title, "zone" if zone else kind, row))
             counts[kind] = counts.get(kind, 0) + 1
             if kind == "buy":
@@ -430,7 +444,8 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
     tab_html = '<div class="tabs">' + "".join(
         f'<button data-f="{f}"{" class=on" if f == "all" else ""}>{label}'
         f'<span class="n">{total if f == "all" else counts.get(f, 0)}</span></button>'
-        for f, label in tabs) + "</div>"  # always shown, 0 when empty
+        for f, label in tabs) + '<button id="newonly" class="tog">New only</button>' \
+        + "</div>"  # always shown, 0 when empty
 
     positions = holdings.get("positions", {})
     # one page per ticker in reports/cards/, rewritten every run
