@@ -18,6 +18,51 @@ from .snapshot import describe, now_row
 
 _PRICES = {}  # ticker -> latest price on the page, for "since the buy"
 _HELD = {}    # ticker -> shares you own, for the Owned column
+_PE = {}      # ticker -> (forward P/E, sector median forward P/E)
+
+
+def _load_sector_pe():
+    """Forward P/E vs the median of its sector across your own tickers -
+    a bank at 11 and software at 11 mean different things."""
+    import statistics
+    from .constants import FUNDAMENTAL_CACHE_FILE, SECTOR_CACHE_FILE
+    try:
+        fund = json.loads(FUNDAMENTAL_CACHE_FILE.read_text(encoding="utf-8"))
+        sect = json.loads(SECTOR_CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    by_sector = {}
+    for tk, f in fund.items():
+        pe, s = f.get("forward_pe"), (sect.get(tk) or {}).get("sector")
+        if pe and pe > 0 and s:
+            by_sector.setdefault(s, []).append(pe)
+    med = {s: statistics.median(v) for s, v in by_sector.items() if len(v) >= 5}
+    _PE.clear()
+    for tk, f in fund.items():
+        pe, s = f.get("forward_pe"), (sect.get(tk) or {}).get("sector")
+        if pe and pe > 0 and s in med:
+            _PE[tk] = (pe, med[s], s)
+
+
+def _sector_cell(ticker: str) -> str:
+    v = _PE.get(ticker)
+    if not v:
+        return _td("", "")
+    pe, med, s = v
+    x = pe / med
+    cls = "g-a" if x < 0.8 else "g-d" if x > 1.25 else ""
+    return (f'<td data-v="{x:.3f}" class="{cls}" title="Fwd P/E {pe:.1f} vs {_e(s)} median {med:.1f}">'
+            f'{x:.2f}&times;</td>')
+
+
+def _arrange(first: list, mid: list, common: list, ticker: str) -> list:
+    """Column order: Owned, Ticker, Price, <section columns>, Zone, AI, Rung,
+    DP, Earn, Val, vs Sector, Details. first = [owned, rung, ticker, price],
+    common = [zone, ai, dp, earn, val, details]."""
+    owned, rung, tick, price = first
+    zone, ai, dp, earn, val, details = common
+    return [owned, tick, price] + mid + [zone, ai, rung, dp, earn, val,
+                                         _sector_cell(ticker), details]
 
 # Set per run from config.json "chart_site" (see charts.py)
 _chart = lambda t: f"https://www.tradingview.com/chart/?symbol={t}"
@@ -168,7 +213,8 @@ def _row(item: dict, side: str) -> str:
         extra.append(f'in zone {item["rung_zone"]}')
     if extra:
         rung += f' <span class="tags">({", ".join(extra)})</span>'
-    cells = _first(item) + [_td(status, dist), _td(rung, total)] + _common(item)
+    cells = _arrange(_first(item), [_td(status, dist), _td(rung, total)], _common(item),
+                     item["ticker"])
     return f'<tr data-r="{item["rating"]}">' + "".join(cells) + "</tr>"
 
 
@@ -184,10 +230,10 @@ def _zone_row(item: dict) -> str:
     else:
         first = _td('<span class="tags" title="no rung within 5%">&ndash;</span>', 0)
     base = _first(item)
-    cells = [base[0], first] + base[2:] + [
+    cells = _arrange([base[0], first, base[2], base[3]], [
         _td(f'{item["was"]} &rarr; {item["zone"]}', item["zone"]),
         _td(f'{item["off_high"]:.0f}%', item["off_high"], "num"),
-    ] + _common(item)
+    ], _common(item), item["ticker"])
     return "<tr>" + "".join(cells) + "</tr>"
 
 
@@ -197,11 +243,11 @@ def _owned_row(item: dict) -> str:
     ns = item.get("next_sell")
     sell = (f'${ns:g} <span class="tags">(+{(ns / item["price"] - 1) * 100:.1f}%)</span>'
             if ns else '<span class="tags">none above</span>')
-    cells = _first(item) + [
+    cells = _arrange(_first(item), [
         _td(f'{item["qty"]:g} @ ${item["basis"]:.2f}', item["value_usd"]),
         _td(f'<span class="{cls}">{pl:+.1f}%</span>', pl, "num"),
         _td(sell, (ns / item["price"] - 1) * 100 if ns else 999),
-    ] + _common(item)
+    ], _common(item), item["ticker"])
     return "<tr>" + "".join(cells) + "</tr>"
 
 
@@ -211,7 +257,9 @@ COLS = ["Zone", "AI", "DP", "Earn", "Val", "Details"]
 def _table(rows: list, side: str) -> str:
     mid = {"zone": ["Move", "Off high"],
            "owned": ["Position", "P/L", "Next sell"]}.get(side, ["Target", "Ladder"])
-    head = "".join(f"<th>{h}</th>" for h in ["Owned", "Rung", "Ticker", "Price"] + mid + COLS)
+    cols = ["Owned", "Ticker", "Price"] + mid + ["Zone", "AI", "Rung", "DP", "Earn", "Val",
+                                                    "vs Sector", "Details"]
+    head = "".join(f"<th>{h}</th>" for h in cols)
     return f'<div class="wrap"><table><tr>{head}</tr>{"".join(rows)}</table></div>'
 
 
@@ -337,6 +385,7 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
     for _, _, items in sections:
         for it in items:
             _PRICES[it["ticker"]] = it["price"]
+    _load_sector_pe()
     _HELD.clear()
     _HELD.update({tk: v[0] for tk, v in holdings.get("positions", {}).items()})
 
