@@ -53,8 +53,11 @@ means and how he uses it. Read all of this before commenting on a report.
      section when it appears.
    - `TRIGGERED`: price is at or below a buy rung.
    - `APPROACHING`: within 5% above a rung. 1-star rungs are hidden here.
-3. **SELLS.** The same thing for sell ladders on stocks he holds.
-   `TRIGGERED` = at or above a sell price.
+3. **SELLS.** One line per stock he holds: his average cost +2%
+   (`QUICK_WIN_PCT`). He sells on his own read, usually +1-5% depending on
+   the market, so this is a reminder, not a target. The chart sell ladders
+   are only used for a position with no cost on file.
+   `TRIGGERED` = at or above that price.
 4. **SECTOR ROTATION.** Sectors vs. SPY: 1-day / 10-day / 30-day relative
    return, a composite score, LEADING/LAGGING status, and rank change
    (`^2` = up two places).

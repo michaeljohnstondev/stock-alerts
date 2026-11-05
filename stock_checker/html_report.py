@@ -44,6 +44,52 @@ def _load_sector_pe():
             _PE[tk] = (pe, med[s], s)
 
 
+# More than this share of your money in one sector puts a warning on the page
+OVEREXPOSED_PCT = 30
+# sector ETFs count toward the sector they hold; broad index ones count toward none
+_ETF_SECTOR = {
+    "SOXX": "Technology", "SMH": "Technology", "XLK": "Technology", "QQQ": "Technology",
+    "IGV": "Technology", "ARKK": "Technology", "XLI": "Industrials",
+    "XLF": "Financial Services", "KRE": "Financial Services", "XLE": "Energy",
+    "XLU": "Utilities", "XLV": "Healthcare", "XBI": "Healthcare",
+    "XLP": "Consumer Defensive", "XLY": "Consumer Cyclical", "XLC": "Communication Services",
+    "XLB": "Basic Materials", "XLRE": "Real Estate", "URA": "Energy", "KWEB": "Communication Services",
+}
+
+
+def _exposure_banner(owned: list) -> str:
+    """A loud strip at the top of the page for any sector holding more than
+    OVEREXPOSED_PCT of the money in your positions."""
+    from .constants import SECTOR_CACHE_FILE
+    try:
+        sect = json.loads(SECTOR_CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        sect = {}
+    total = sum(it["value_usd"] for it in owned)
+    if not total:
+        return ""
+    by = {}
+    for it in owned:
+        tk = it["ticker"]
+        s = _ETF_SECTOR.get(tk) or (sect.get(tk) or {}).get("sector")
+        if s and s != "ETF":
+            v, names = by.get(s, (0, []))
+            by[s] = (v + it["value_usd"], names + [(it["value_usd"], tk)])
+    lines = []
+    for s, (v, names) in sorted(by.items(), key=lambda x: -x[1][0]):
+        pct = v / total * 100
+        if pct <= OVEREXPOSED_PCT:
+            break
+        top = ", ".join(tk for _, tk in sorted(names, reverse=True)[:6])
+        lines.append(f'<div><b>{pct:.0f}% in {_e(s)}</b> &mdash; ${v:,.0f} of ${total:,.0f} '
+                     f'across {len(names)} positions (biggest: {_e(top)})</div>')
+    if not lines:
+        return ""
+    return ('<div class="overexp"><div class="oe-t">&#9888; You&rsquo;re overexposed</div>'
+            + "".join(lines)
+            + f'<div class="oe-n">Over {OVEREXPOSED_PCT}% of your money in one sector moves as one bet.</div></div>')
+
+
 def _sector_cell(ticker: str) -> str:
     v = _PE.get(ticker)
     if not v:
@@ -103,6 +149,13 @@ border-radius:999px;padding:5px 12px;cursor:pointer}
 .tabs button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
 .tabs .n{opacity:.7;margin-left:4px}
 .tabs .tog{margin-left:auto} .tabs .tog.on{background:var(--warn);border-color:var(--warn);color:#fff}
+.overexp{background:#d93025;color:#fff;border-radius:12px;padding:14px 16px;margin:12px 0 4px;
+font-size:15px;box-shadow:0 2px 10px rgba(217,48,37,.35)}
+.overexp .oe-t{font-size:20px;font-weight:800;letter-spacing:.3px;margin-bottom:6px}
+.overexp .oe-n{opacity:.9;font-size:13px;margin-top:6px}
+.find{position:sticky;top:0;z-index:5;background:var(--bg);padding:10px 0 4px}
+.find input{font:inherit;font-size:16px;width:100%;box-sizing:border-box;padding:8px 12px;border-radius:10px;
+border:1px solid var(--line);background:var(--card);color:var(--fg)}
 """
 
 JS = """
@@ -113,12 +166,15 @@ window.addEventListener('hashchange',openHash);window.addEventListener('load',op
 var NEW=false;try{NEW=localStorage.getItem('newOnly')==='1'}catch(e){}
 function match(f,k,r){return (f==='all'&&k!=='owned')||f===k||(f.charAt(0)==='r'&&k==='buy'&&r.dataset.r===f.slice(1));}
 function keep(k,r){return !NEW||k==='owned'||r.dataset.n==='1';}
+// a search overrides the tabs and New only: every line for matching tickers, owned included
+var Q='';function hit(r){return r.dataset.t.indexOf(Q)===0;}
+function shown(f,k,r){return Q?hit(r):match(f,k,r)&&keep(k,r);}
 function eachRow(fn){[].forEach.call(document.querySelectorAll('section'),function(s){var k=s.dataset.kind;
 [].forEach.call(s.querySelectorAll('tr[data-k]'),function(r){fn(s,k,r)});});}
 function render(){var on=document.querySelector('.tabs button.on[data-f]'),f=on?on.dataset.f:'all';
 [].forEach.call(document.querySelectorAll('.tabs button[data-f]'),function(b){var c=0,g=b.dataset.f;
 eachRow(function(s,k,r){if(match(g,k,r)&&keep(k,r))c++;});b.querySelector('.n').textContent=c;});
-eachRow(function(s,k,r){r.style.display=match(f,k,r)&&keep(k,r)?'':'none';});
+eachRow(function(s,k,r){r.style.display=shown(f,k,r)?'':'none';});
 [].forEach.call(document.querySelectorAll('section'),function(s){
 var n=0;[].forEach.call(s.querySelectorAll('tr[data-k]'),function(r){if(r.style.display!=='none')n++;});
 s.style.display=n?'':'none';});
@@ -126,6 +182,7 @@ document.getElementById('newonly').classList.toggle('on',NEW);}
 function showTab(btn){[].forEach.call(document.querySelectorAll('.tabs button[data-f]'),function(b){b.classList.toggle('on',b===btn)});render();}
 document.addEventListener('click',function(e){var b=e.target.closest('.tabs button[data-f]');if(b)showTab(b);
 if(e.target.closest('#newonly')){NEW=!NEW;try{localStorage.setItem('newOnly',NEW?'1':'0')}catch(x){}render();}});
+document.addEventListener('input',function(e){if(e.target.id==='q'){Q=e.target.value.trim().toUpperCase();render();}});
 window.addEventListener('load',render);
 document.addEventListener('click',function(e){var th=e.target.closest('th');if(!th)return;
 var table=th.closest('table'),idx=[].indexOf.call(th.parentNode.children,th);
@@ -427,7 +484,7 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
                    else _row(it, kind))
             # zone moves are news by definition; ladder lines only when flagged
             n = ' data-n="1"' if zone or it.get("escalated") else ""
-            rows.append(row.replace("<tr", f'<tr data-k="{kind}"{n}', 1))
+            rows.append(row.replace("<tr", f'<tr data-k="{kind}" data-t="{it["ticker"]}"{n}', 1))
             by_ticker.setdefault(it["ticker"], []).append((title, "zone" if zone else kind, row))
             counts[kind] = counts.get(kind, 0) + 1
             if kind == "buy":
@@ -441,7 +498,8 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
     tabs = [("all", "All"), ("cheaper", "Cheaper"), ("recovering", "Climbing")] + \
            [(f"r{n}", "&#9733;" * n) for n in (5, 4, 3, 2, 1)] + [("sell", "Sells"), ("owned", "Owned")]
     total = sum(v for k, v in counts.items() if not k.startswith("r") and k != "owned")
-    tab_html = '<div class="tabs">' + "".join(
+    tab_html = '<div class="find"><input id="q" type="search" placeholder="Find ticker" ' \
+        'autocomplete="off" autocapitalize="characters" spellcheck="false"></div><div class="tabs">' + "".join(
         f'<button data-f="{f}"{" class=on" if f == "all" else ""}>{label}'
         f'<span class="n">{total if f == "all" else counts.get(f, 0)}</span></button>'
         for f, label in tabs) + '<button id="newonly" class="tog">New only</button>' \
@@ -468,7 +526,8 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
     page = (f'<!doctype html><html><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>Ratings {timestamp}</title><style>{CSS}</style></head><body><main id="top">'
-            f'<h1>Stock Ratings</h1><div class="meta">'
+            + _exposure_banner(next((items for _, k, items in sections if k == "owned"), []))
+            + f'<h1>Stock Ratings</h1><div class="meta">'
             + "".join(f"<div>{_e(h)}</div>" for h in header)
             + '<div>&#9733; = rung (&#9733;&#9733;&#9733;&#9733; = rung 4, &#9733;&#9733;&#9733;&#9733;&#9733; = watch price). Click a ticker for its card,'
               ' a column header to sort (again to reverse).</div>'

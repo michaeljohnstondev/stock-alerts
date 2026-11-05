@@ -97,6 +97,22 @@ def _fetch_ticker_data(ticker: str, earnings_calendar: dict,
     return result
 
 
+# Sells are your call (1-5% depending on the market), not the chart ladders:
+# a held name alerts once it is this far above your average cost.
+QUICK_WIN_PCT = 2.0
+
+
+def quick_win(basis: float) -> float:
+    return round(basis * (1 + QUICK_WIN_PCT / 100), 2)
+
+
+def _sell_rungs(ticker: str, data: dict, positions: dict) -> list:
+    """The +2% line off your cost; the chart ladder only for a position with no
+    cost on file (manual entries)."""
+    basis = (positions.get(ticker) or (0, 0))[1]
+    return [{"price": quick_win(basis), "rating": 1}] if basis else data.get("sells", [])
+
+
 def build_owned(holdings: dict, ratings: dict) -> list:
     """One row per position: price, P/L, next sell rung, and the same zone /
     DP / earnings / value scores the report uses. Fetches its own prices, so
@@ -118,7 +134,7 @@ def build_owned(holdings: dict, ratings: dict) -> list:
         if not price:
             continue
         entry = ratings.get(t, {})
-        above = sorted(x["price"] for x in entry.get("sells", []) if x["price"] > price)
+        above = sorted(x["price"] for x in _sell_rungs(t, entry, positions) if x["price"] > price)
         filled = [b["rating"] for b in entry.get("buys", []) if b.get("filled")]
         out.append({
             "ticker": t, "price": price, "qty": qty, "basis": basis,
@@ -406,7 +422,8 @@ def run_report() -> tuple:
                     buy_near.append(item)
 
         # Process sells - nothing to sell once the position is gone
-        for entry in (data.get("sells", []) if ticker in held else []):
+        sells = _sell_rungs(ticker, data, holdings.get("positions", {})) if ticker in held else []
+        for entry in sells:
             info = _classify_entry(price, entry, "sell")
             all_evals.append((ticker, "sell", info, price))
             item = {
@@ -416,8 +433,8 @@ def run_report() -> tuple:
                 "value": value,
                 "dp": dark_pool.get(ticker),
                 "zone": zone,
-                "rungs": len(data.get("sells", [])),
-                "auto": data.get("sells_source") == "auto",
+                "rungs": len(sells),
+                "auto": data.get("sells_source") == "auto" and sells is data.get("sells"),
                 **info,
             }
             if is_muted(mutes, ticker, info["rating"], "sell"):
