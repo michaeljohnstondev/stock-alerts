@@ -57,22 +57,38 @@ _ETF_SECTOR = {
 }
 
 
+_SECT = {}   # ticker -> sector, for the overexposed tint
+_HEAVY = set()  # sectors over OVEREXPOSED_PCT this run
+
+
+def _sector_of(tk: str):
+    s = _ETF_SECTOR.get(tk) or (_SECT.get(tk) or {}).get("sector")
+    return s if s and s != "ETF" else None
+
+
+def _ox(tk: str) -> str:
+    """Pink-tint class for a ticker in a sector you're overexposed to."""
+    return " ox" if _sector_of(tk) in _HEAVY else ""
+
+
 def _exposure_banner(owned: list) -> str:
     """A loud strip at the top of the page for any sector holding more than
-    OVEREXPOSED_PCT of the money in your positions."""
+    OVEREXPOSED_PCT of the money in your positions. Also sets _HEAVY, so every
+    row and card in those sectors gets tinted."""
     from .constants import SECTOR_CACHE_FILE
     try:
-        sect = json.loads(SECTOR_CACHE_FILE.read_text(encoding="utf-8"))
+        _SECT.update(json.loads(SECTOR_CACHE_FILE.read_text(encoding="utf-8")))
     except Exception:
-        sect = {}
+        pass
+    _HEAVY.clear()
     total = sum(it["value_usd"] for it in owned)
     if not total:
         return ""
     by = {}
     for it in owned:
         tk = it["ticker"]
-        s = _ETF_SECTOR.get(tk) or (sect.get(tk) or {}).get("sector")
-        if s and s != "ETF":
+        s = _sector_of(tk)
+        if s:
             v, names = by.get(s, (0, []))
             by[s] = (v + it["value_usd"], names + [(it["value_usd"], tk)])
     lines = []
@@ -80,6 +96,7 @@ def _exposure_banner(owned: list) -> str:
         pct = v / total * 100
         if pct <= OVEREXPOSED_PCT:
             break
+        _HEAVY.add(s)
         top = ", ".join(tk for _, tk in sorted(names, reverse=True)[:6])
         lines.append(f'<div><b>{pct:.0f}% in {_e(s)}</b> &mdash; ${v:,.0f} of ${total:,.0f} '
                      f'across {len(names)} positions (biggest: {_e(top)})</div>')
@@ -87,7 +104,8 @@ def _exposure_banner(owned: list) -> str:
         return ""
     return ('<div class="overexp"><div class="oe-t">&#9888; You&rsquo;re overexposed</div>'
             + "".join(lines)
-            + f'<div class="oe-n">Over {OVEREXPOSED_PCT}% of your money in one sector moves as one bet.</div></div>')
+            + f'<div class="oe-n">Over {OVEREXPOSED_PCT}% of your money in one sector moves as one bet. '
+              'Pink rows and cards are in that sector.</div></div>')
 
 
 def _sector_cell(ticker: str) -> str:
@@ -115,9 +133,19 @@ _chart = lambda t: f"https://www.tradingview.com/chart/?symbol={t}"
 
 CSS = """
 :root{--bg:#fbfaf8;--fg:#1d1d1f;--mute:#6b6b70;--line:#e4e2dd;--card:#fff;
---acc:#2457c5;--up:#1b7f4b;--down:#b3261e;--warn:#9a6700;--chip:#f0eee9}
+--acc:#2457c5;--up:#1b7f4b;--down:#b3261e;--warn:#9a6700;--chip:#f0eee9;--ox:#fde0de}
 @media (prefers-color-scheme:dark){:root{--bg:#141416;--fg:#ececef;--mute:#9a9aa2;
---line:#2c2c31;--card:#1c1c20;--acc:#7aa2ff;--up:#5cc58c;--down:#ff8a80;--warn:#e3b341;--chip:#26262b}}
+--line:#2c2c31;--card:#1c1c20;--acc:#7aa2ff;--up:#5cc58c;--down:#ff8a80;--warn:#e3b341;--chip:#26262b;--ox:#4a1f1d}}
+tr.ox td{background:var(--ox)} .card.ox{background:var(--ox);border-left:4px solid #d93025}
+/* phones: scroll the table sideways instead of crushing Details into a tall
+   column, and keep the ticker pinned on the left while you scroll */
+@media (max-width:700px){
+main{padding:12px 10px 60px} td,th{padding:6px 8px;font-size:13px}
+td.tags{min-width:300px;font-size:12px;line-height:1.35}
+td:nth-child(2),th:nth-child(2){position:sticky;left:0;z-index:1;background:var(--bg);
+box-shadow:1px 0 0 var(--line)}
+tr.ox td:nth-child(2){background:var(--ox)}
+.card td:nth-child(2),.card th:nth-child(2){background:var(--card)}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:1600px;margin:0 auto;padding:20px 24px 80px}
@@ -470,6 +498,7 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
     _HELD.clear()
     _HELD.update({tk: v[0] for tk, v in holdings.get("positions", {}).items()})
 
+    banner = _exposure_banner(next((items for _, k, items in sections if k == "owned"), []))
     seen, body, counts = [], [], {}
     by_ticker = {}  # ticker -> [(section title, kind, row)] for its card
     for title, kind, items in sections:
@@ -484,7 +513,8 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
                    else _row(it, kind))
             # zone moves are news by definition; ladder lines only when flagged
             n = ' data-n="1"' if zone or it.get("escalated") else ""
-            rows.append(row.replace("<tr", f'<tr data-k="{kind}" data-t="{it["ticker"]}"{n}', 1))
+            ox = ' class="ox"' if _ox(it["ticker"]) else ""
+            rows.append(row.replace("<tr", f'<tr data-k="{kind}" data-t="{it["ticker"]}"{n}{ox}', 1))
             by_ticker.setdefault(it["ticker"], []).append((title, "zone" if zone else kind, row))
             counts[kind] = counts.get(kind, 0) + 1
             if kind == "buy":
@@ -516,7 +546,7 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
                             for title, kind, row in by_ticker.get(t, []))
         # the card already lives in cards/, so its own ticker link is a sibling
         rows_html = rows_html.replace('href="cards/', 'href="')
-        card = card.replace('<div class="card">', f'<div class="card">{rows_html}', 1)
+        card = card.replace('<div class="card">', f'<div class="card{_ox(t)}">{rows_html}', 1)
         (card_dir / f"{t}.html").write_text(
             f'<!doctype html><html><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -526,8 +556,7 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
     page = (f'<!doctype html><html><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>Ratings {timestamp}</title><style>{CSS}</style></head><body><main id="top">'
-            + _exposure_banner(next((items for _, k, items in sections if k == "owned"), []))
-            + f'<h1>Stock Ratings</h1><div class="meta">'
+            + banner + f'<h1>Stock Ratings</h1><div class="meta">'
             + "".join(f"<div>{_e(h)}</div>" for h in header)
             + '<div>&#9733; = rung (&#9733;&#9733;&#9733;&#9733; = rung 4, &#9733;&#9733;&#9733;&#9733;&#9733; = watch price). Click a ticker for its card,'
               ' a column header to sort (again to reverse).</div>'
