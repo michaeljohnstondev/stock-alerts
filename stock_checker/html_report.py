@@ -91,18 +91,22 @@ def _exposure_banner(owned: list) -> str:
         if s:
             v, names = by.get(s, (0, []))
             by[s] = (v + it["value_usd"], names + [(it["value_usd"], tk)])
-    lines = []
+    lines, key = [], []
     for s, (v, names) in sorted(by.items(), key=lambda x: -x[1][0]):
         pct = v / total * 100
         if pct <= OVEREXPOSED_PCT:
             break
         _HEAVY.add(s)
+        key.append(f"{s}:{int(pct // 5 * 5)}")
         top = ", ".join(tk for _, tk in sorted(names, reverse=True)[:6])
         lines.append(f'<div><b>{pct:.0f}% in {_e(s)}</b> &mdash; ${v:,.0f} of ${total:,.0f} '
                      f'across {len(names)} positions (biggest: {_e(top)})</div>')
     if not lines:
         return ""
-    return ('<div class="overexp"><div class="oe-t">&#9888; You&rsquo;re overexposed</div>'
+    # closing it lasts until the picture changes (another sector, or 5 points more)
+    return (f'<div class="overexp" data-key="{_e("|".join(key))}">'
+            '<button class="oe-x" title="Hide until this changes">&times;</button>'
+            '<div class="oe-t">&#9888; You&rsquo;re overexposed</div>'
             + "".join(lines)
             + f'<div class="oe-n">Over {OVEREXPOSED_PCT}% of your money in one sector moves as one bet. '
               'Pink rows and cards are in that sector.</div></div>')
@@ -177,10 +181,12 @@ border-radius:999px;padding:5px 12px;cursor:pointer}
 .tabs button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
 .tabs .n{opacity:.7;margin-left:4px}
 .tabs .tog{margin-left:auto} .tabs .tog.on{background:var(--warn);border-color:var(--warn);color:#fff}
-.overexp{background:#d93025;color:#fff;border-radius:12px;padding:14px 16px;margin:12px 0 4px;
-font-size:15px;box-shadow:0 2px 10px rgba(217,48,37,.35)}
-.overexp .oe-t{font-size:20px;font-weight:800;letter-spacing:.3px;margin-bottom:6px}
-.overexp .oe-n{opacity:.9;font-size:13px;margin-top:6px}
+.overexp{position:relative;border:2px solid #d93025;border-radius:12px;padding:12px 40px 12px 16px;
+margin:12px 0 4px;font-size:14px}
+.overexp .oe-t{color:#d93025;font-size:16px;font-weight:700;margin-bottom:4px}
+.overexp .oe-n{color:var(--mute);font-size:12.5px;margin-top:4px}
+.overexp .oe-x{position:absolute;top:6px;right:8px;font:inherit;font-size:20px;line-height:1;
+background:none;border:0;color:var(--mute);cursor:pointer;padding:4px 8px}
 .find{position:sticky;top:0;z-index:5;background:var(--bg);padding:10px 0 4px}
 .find input{font:inherit;font-size:16px;width:100%;box-sizing:border-box;padding:8px 12px;border-radius:10px;
 border:1px solid var(--line);background:var(--card);color:var(--fg)}
@@ -210,6 +216,10 @@ document.getElementById('newonly').classList.toggle('on',NEW);}
 function showTab(btn){[].forEach.call(document.querySelectorAll('.tabs button[data-f]'),function(b){b.classList.toggle('on',b===btn)});render();}
 document.addEventListener('click',function(e){var b=e.target.closest('.tabs button[data-f]');if(b)showTab(b);
 if(e.target.closest('#newonly')){NEW=!NEW;try{localStorage.setItem('newOnly',NEW?'1':'0')}catch(x){}render();}});
+(function(){var b=document.querySelector('.overexp');if(!b)return;var k=b.dataset.key;
+try{if(localStorage.getItem('oeHidden')===k)b.style.display='none'}catch(e){}
+b.querySelector('.oe-x').addEventListener('click',function(){b.style.display='none';
+try{localStorage.setItem('oeHidden',k)}catch(e){}});})();
 document.addEventListener('input',function(e){if(e.target.id==='q'){Q=e.target.value.trim().toUpperCase();render();}});
 window.addEventListener('load',render);
 document.addEventListener('click',function(e){var th=e.target.closest('th');if(!th)return;
