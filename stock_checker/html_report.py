@@ -19,6 +19,8 @@ from .snapshot import describe, now_row
 _PRICES = {}  # ticker -> latest price on the page, for "since the buy"
 _HELD = {}    # ticker -> shares you own, for the Owned column
 _PE = {}      # ticker -> (forward P/E, sector median forward P/E)
+_BARS = {}    # ticker -> a year of daily candles, for the charts
+MINI_DAYS = 126  # the row chart: about six months of trading days
 
 
 def _load_sector_pe():
@@ -129,8 +131,21 @@ def _arrange(first: list, mid: list, common: list, ticker: str) -> list:
     common = [zone, ai, dp, earn, val, details]."""
     owned, rung, tick, price = first
     zone, ai, o1, o5, o20, dp, earn, val, details = common
-    return [owned, tick, price] + mid + [zone, ai, o1, o5, o20, rung, dp, earn, val,
+    return [owned, tick, price, _mini(ticker)] + mid + [zone, ai, o1, o5, o20, rung, dp, earn, val,
                                          _sector_cell(ticker), details]
+
+def _mini(ticker: str) -> str:
+    """Six months of daily candles, drawn by the page's script when scrolled
+    into view. Sorts by the change over those six months."""
+    bars = _BARS.get(ticker)
+    if not bars:
+        return _td("", "")
+    b = bars[-MINI_DAYS:]
+    chg = (b[-1][4] / b[0][1] - 1) * 100
+    return (f'<td data-v="{chg:.1f}" title="{chg:+.1f}% over {len(b)} days">'
+            f'<a href="cards/{_e(ticker)}.html" target="_blank">'
+            f'<canvas class="mini" data-t="{_e(ticker)}"></canvas></a></td>')
+
 
 # Set per run from config.json "chart_site" (see charts.py)
 _chart = lambda t: f"https://www.tradingview.com/chart/?symbol={t}"
@@ -187,6 +202,11 @@ margin:12px 0 4px;font-size:14px}
 .overexp .oe-n{color:var(--mute);font-size:12.5px;margin-top:4px}
 .overexp .oe-x{position:absolute;top:6px;right:8px;font:inherit;font-size:20px;line-height:1;
 background:none;border:0;color:var(--mute);cursor:pointer;padding:4px 8px}
+canvas.mini{display:block;width:170px;height:34px}
+.rng{display:flex;gap:6px;margin:6px 0} .rng button{font:inherit;font-size:12px;background:var(--chip);
+color:var(--fg);border:1px solid var(--line);border-radius:999px;padding:3px 10px;cursor:pointer}
+.rng button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+canvas.big{display:block;width:100%;height:300px} #ohlc{min-height:1.4em}
 .find{position:sticky;top:0;z-index:5;background:var(--bg);padding:10px 0 4px}
 .find input{font:inherit;font-size:16px;width:100%;box-sizing:border-box;padding:8px 12px;border-radius:10px;
 border:1px solid var(--line);background:var(--card);color:var(--fg)}
@@ -234,6 +254,45 @@ if(!isNaN(nx)&&!isNaN(ny))return (nx-ny)*dir;
 if(x===''||x===undefined)return 1; if(y===''||y===undefined)return -1;
 return x.localeCompare(y)*dir;});
 rows.forEach(function(r){table.appendChild(r)});});
+"""
+
+# Candles on canvas, from C (ticker -> [[date, o, h, l, c]]). Row charts draw
+# only once scrolled into view; a card's big chart has range buttons, your
+# open buy rungs (dashed) and cost (solid) as lines, and a tap readout.
+CHART_JS = """
+function cv(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+function drawC(c,bars,o){o=o||{};var W=c.clientWidth,H=c.clientHeight,d=window.devicePixelRatio||1;
+c.width=W*d;c.height=H*d;var g=c.getContext('2d');g.scale(d,d);g.clearRect(0,0,W,H);
+if(!bars||!bars.length)return null;var R=o.right||0,T=o.top||2,B=o.bottom||2;
+var lo=Infinity,hi=-Infinity;bars.forEach(function(b){lo=Math.min(lo,b[3]);hi=Math.max(hi,b[2]);});
+var sp=hi-lo,ls=(o.lines||[]).filter(function(l){return l.p>=lo-sp*.2&&l.p<=hi+sp*.2;});
+ls.forEach(function(l){lo=Math.min(lo,l.p);hi=Math.max(hi,l.p);});
+var n=bars.length,cw=(W-R)/n,y=function(v){return T+(hi-v)/((hi-lo)||1)*(H-T-B);};
+var up=cv('--up'),dn=cv('--down'),mu=cv('--mute');g.font='11px system-ui,sans-serif';
+if(o.axis){g.fillStyle=mu;var m='';bars.forEach(function(b,i){var k=b[0].slice(0,7);
+if(k!==m){if(m){g.fillRect(i*cw,H-B,1,4);g.fillText(new Date(b[0]+'T12:00').toLocaleString('en',{month:'short'}),i*cw+3,H-2);}m=k;}});
+[hi,lo].forEach(function(v){g.fillText('$'+v.toFixed(2),W-R+4,y(v)+4);});}
+bars.forEach(function(b,i){var x=Math.round(i*cw+cw/2)+.5,col=b[4]>=b[1]?up:dn;g.strokeStyle=g.fillStyle=col;
+g.lineWidth=1;g.beginPath();g.moveTo(x,y(b[2]));g.lineTo(x,y(b[3]));g.stroke();
+var w=Math.max(cw*.7,1),t=y(Math.max(b[1],b[4])),h=Math.max(Math.abs(y(b[1])-y(b[4])),1);
+g.fillRect(x-w/2,t,w,h);});
+ls.forEach(function(l){var yy=Math.round(y(l.p))+.5;g.strokeStyle=g.fillStyle=cv(l.c);g.setLineDash(l.dash?[4,3]:[]);
+g.beginPath();g.moveTo(0,yy);g.lineTo(W-R,yy);g.stroke();g.setLineDash([]);if(R)g.fillText(l.t,W-R+4,yy+4);});
+return {cw:cw};}
+(function(){var io='IntersectionObserver' in window?new IntersectionObserver(function(es){es.forEach(function(e){
+if(e.isIntersecting){io.unobserve(e.target);drawC(e.target,(C[e.target.dataset.t]||[]).slice(-MINI));}});},{rootMargin:'300px'}):null;
+[].forEach.call(document.querySelectorAll('canvas.mini'),function(c){if(io)io.observe(c);
+else drawC(c,(C[c.dataset.t]||[]).slice(-MINI));});
+var big=document.getElementById('big');if(!big)return;var all=C[big.dataset.t]||[],n=MINI,info,shown;
+function go(){shown=all.slice(-n);info=drawC(big,shown,{right:70,top:8,bottom:16,axis:1,lines:L});
+[].forEach.call(document.querySelectorAll('.rng button'),function(b){b.classList.toggle('on',+b.dataset.n===n);});}
+document.querySelector('.rng').addEventListener('click',function(e){var b=e.target.closest('button');if(b){n=+b.dataset.n;go();}});
+function show(e){if(!info)return;var r=big.getBoundingClientRect(),i=Math.floor((e.clientX-r.left)/info.cw);
+var b=shown[Math.max(0,Math.min(shown.length-1,i))];
+document.getElementById('ohlc').textContent=b[0]+'  O '+b[1]+'  H '+b[2]+'  L '+b[3]+'  C '+b[4]+
+'  ('+((b[4]/b[1]-1)*100).toFixed(1)+'%)';}
+big.addEventListener('pointermove',show);big.addEventListener('pointerdown',show);
+window.addEventListener('resize',go);go();})();
 """
 
 
@@ -372,7 +431,7 @@ COLS = ["Zone", "AI", "DP", "Earn", "Val", "Details"]
 def _table(rows: list, side: str) -> str:
     mid = {"zone": ["Move", "Off high"],
            "owned": ["Position", "P/L", "Next sell"]}.get(side, ["Target", "Ladder"])
-    cols = ["Owned", "Ticker", "Price"] + mid + ["Zone", "AI", "O-1", "O-5", "O-20", "Rung", "DP", "Earn", "Val",
+    cols = ["Owned", "Ticker", "Price", "6 mo"] + mid + ["Zone", "AI", "O-1", "O-5", "O-20", "Rung", "DP", "Earn", "Val",
                                                     "vs Sector", "Details"]
     head = "".join(f"<th>{h}</th>" for h in cols)
     return f'<div class="wrap"><table><tr>{head}</tr>{"".join(rows)}</table></div>'
@@ -466,6 +525,14 @@ def _card(t: str, entry: dict, note: dict | None, pos, stale) -> str:
     return f'<h1>{title}</h1><div class="card">{"".join(bits)}</div>'
 
 
+def _big_chart(t: str) -> str:
+    if t not in _BARS:
+        return ""
+    btn = "".join(f'<button data-n="{n}">{lbl}</button>' for n, lbl in ((63, "3M"), (MINI_DAYS, "6M"), (252, "1Y")))
+    return (f'<div class="lbl">Daily chart</div><div class="rng">{btn}</div>'
+            f'<canvas id="big" class="big" data-t="{_e(t)}"></canvas><div id="ohlc" class="meta"></div>')
+
+
 def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
                       holdings: dict, stale_fn, timestamp: str):
     """header: lines of text. sections: [(title, kind, items)] - kind is
@@ -507,6 +574,10 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
     _load_sector_pe()
     _HELD.clear()
     _HELD.update({tk: v[0] for tk, v in holdings.get("positions", {}).items()})
+
+    from .candles import load_candles
+    _BARS.clear()
+    _BARS.update(load_candles(sorted({it["ticker"] for _, _, items in sections for it in items})))
 
     banner = _exposure_banner(next((items for _, k, items in sections if k == "owned"), []))
     seen, body, counts = [], [], {}
@@ -556,13 +627,21 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
                             for title, kind, row in by_ticker.get(t, []))
         # the card already lives in cards/, so its own ticker link is a sibling
         rows_html = rows_html.replace('href="cards/', 'href="')
-        card = card.replace('<div class="card">', f'<div class="card{_ox(t)}">{rows_html}', 1)
+        card = card.replace('<div class="card">', f'<div class="card{_ox(t)}">{_big_chart(t)}{rows_html}', 1)
+        # lines on the big chart: open buy rungs, and your cost if you hold it
+        lines = [{"p": b["price"], "t": f'{"*" * b["rating"]} ${b["price"]:g}', "c": "--warn", "dash": 1}
+                 for b in ratings.get(t, {}).get("buys", []) if not b.get("filled")]
+        if positions.get(t):
+            lines.append({"p": positions[t][1], "t": f'cost ${positions[t][1]:.2f}', "c": "--acc"})
+        data = json.dumps({t: _BARS.get(t, [])}) if t in _BARS else "{}"
         (card_dir / f"{t}.html").write_text(
             f'<!doctype html><html><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>{_e(t)}</title><style>{CSS}</style></head><body><main>'
-            f'{card}<p class="meta">as of run {_e(timestamp)}</p></main></body></html>',
+            f'{card}<p class="meta">as of run {_e(timestamp)}</p></main>'
+            f'<script>var C={data},L={json.dumps(lines)},MINI={MINI_DAYS};{CHART_JS}</script></body></html>',
             encoding="utf-8")
+    mini = {t: _BARS[t][-MINI_DAYS:] for t in seen if t in _BARS}
     page = (f'<!doctype html><html><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>Ratings {timestamp}</title><style>{CSS}</style></head><body><main id="top">'
@@ -571,7 +650,8 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
             + '<div>&#9733; = rung (&#9733;&#9733;&#9733;&#9733; = rung 4, &#9733;&#9733;&#9733;&#9733;&#9733; = watch price). Click a ticker for its card,'
               ' a column header to sort (again to reverse).</div>'
             + "</div>" + tab_html + "".join(body)
-            + f"</main><script>{JS}</script></body></html>")
+            + f"</main><script>{JS}</script><script>var C={json.dumps(mini)},L=[],MINI={MINI_DAYS};"
+            + CHART_JS + "</script></body></html>")
     path = REPORTS_DIR / f"ratings_{timestamp}.html"
     path.write_text(page, encoding="utf-8")
     shutil.copy(path, REPORTS_DIR / "latest.html")
