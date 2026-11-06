@@ -195,7 +195,8 @@ details:target{outline:2px solid var(--acc)}
 border-radius:999px;padding:5px 12px;cursor:pointer}
 .tabs button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
 .tabs .n{opacity:.7;margin-left:4px}
-.tabs .tog{margin-left:auto} .tabs .tog.on{background:var(--warn);border-color:var(--warn);color:#fff}
+.tabs .tog{margin-left:auto} .tabs .tog+.tog{margin-left:0} .tabs .tog.on{background:var(--warn);border-color:var(--warn);color:#fff}
+.tabs .ox-t{border-color:#d93025} .tabs .ox-t.on{background:#d93025;border-color:#d93025}
 .overexp{position:relative;border:2px solid #d93025;border-radius:12px;padding:12px 40px 12px 16px;
 margin:12px 0 4px;font-size:14px}
 .overexp .oe-t{color:#d93025;font-size:16px;font-weight:700;margin-bottom:4px}
@@ -219,7 +220,9 @@ window.addEventListener('hashchange',openHash);window.addEventListener('load',op
 // "New only" hides lines that are the same as last scan (the short report's filter)
 var NEW=false;try{NEW=localStorage.getItem('newOnly')==='1'}catch(e){}
 function match(f,k,r){return (f==='all'&&k!=='owned')||f===k||(f.charAt(0)==='r'&&k==='buy'&&r.dataset.r===f.slice(1));}
-function keep(k,r){return !NEW||k==='owned'||r.dataset.n==='1';}
+// "Hide pink" drops lines in your overexposed sectors; your own positions stay
+var OX=false;try{OX=localStorage.getItem('hideOx')==='1'}catch(e){}
+function keep(k,r){return (!NEW||k==='owned'||r.dataset.n==='1')&&!(OX&&k!=='owned'&&r.classList.contains('ox'));}
 // a search overrides the tabs and New only: every line for matching tickers, owned included
 var Q='';function hit(r){return r.dataset.t.indexOf(Q)===0;}
 function shown(f,k,r){return Q?hit(r):match(f,k,r)&&keep(k,r);}
@@ -232,10 +235,12 @@ eachRow(function(s,k,r){r.style.display=shown(f,k,r)?'':'none';});
 [].forEach.call(document.querySelectorAll('section'),function(s){
 var n=0;[].forEach.call(s.querySelectorAll('tr[data-k]'),function(r){if(r.style.display!=='none')n++;});
 s.style.display=n?'':'none';});
-document.getElementById('newonly').classList.toggle('on',NEW);}
+document.getElementById('newonly').classList.toggle('on',NEW);
+var hx=document.getElementById('hideox');if(hx)hx.classList.toggle('on',OX);}
 function showTab(btn){[].forEach.call(document.querySelectorAll('.tabs button[data-f]'),function(b){b.classList.toggle('on',b===btn)});render();}
 document.addEventListener('click',function(e){var b=e.target.closest('.tabs button[data-f]');if(b)showTab(b);
-if(e.target.closest('#newonly')){NEW=!NEW;try{localStorage.setItem('newOnly',NEW?'1':'0')}catch(x){}render();}});
+if(e.target.closest('#newonly')){NEW=!NEW;try{localStorage.setItem('newOnly',NEW?'1':'0')}catch(x){}render();}
+if(e.target.closest('#hideox')){OX=!OX;try{localStorage.setItem('hideOx',OX?'1':'0')}catch(x){}render();}});
 (function(){var b=document.querySelector('.overexp');if(!b)return;var k=b.dataset.key;
 try{if(localStorage.getItem('oeHidden')===k)b.style.display='none'}catch(e){}
 b.querySelector('.oe-x').addEventListener('click',function(){b.style.display='none';
@@ -614,6 +619,7 @@ def write_html_report(header: list, sections: list, ratings: dict, notes: dict,
         f'<button data-f="{f}"{" class=on" if f == "all" else ""}>{label}'
         f'<span class="n">{total if f == "all" else counts.get(f, 0)}</span></button>'
         for f, label in tabs) + '<button id="newonly" class="tog">New only</button>' \
+        + ('<button id="hideox" class="tog ox-t">Hide pink</button>' if _HEAVY else "") \
         + "</div>"  # always shown, 0 when empty
 
     positions = holdings.get("positions", {})
